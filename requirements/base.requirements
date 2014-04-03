@@ -5,3 +5,6 @@ nose==1.3.1
 nose-blockage==0.1.2
 nose-progressive==1.5
 coverage==3.6
+celery==3.1.7
+PyYAML==3.10
+-e git+git@github.com:systemadev/pymlconf.git#egg=pymlconf
