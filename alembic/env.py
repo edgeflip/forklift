@@ -1,7 +1,9 @@
 from __future__ import with_statement
 from alembic import context
-from sqlalchemy import create_engine, pool
+from sqlalchemy import create_engine
 from logging.config import fileConfig
+import sys
+import os
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -15,12 +17,12 @@ fileConfig(config.config_file_name)
 # for 'autogenerate' support
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
-import sys
-sys.path.append('/home/tristan/src/forklift')
+
+
+# Import models
+sys.path.append(os.path.abspath(os.curdir))
 from models.base import Base
 target_metadata = Base.metadata
-
-
 from settings import SQLALCHEMY_URL
 
 # other values from the config, defined by the needs of env.py,
