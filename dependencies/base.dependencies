@@ -1,0 +1,4 @@
+python-dev
+build-essential
+virtualenvwrapper
+libpq-dev
