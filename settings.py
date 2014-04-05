@@ -1,5 +1,6 @@
 import os
 import pymlconf
+from kombu import Queue
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(PROJECT_ROOT)
@@ -18,3 +19,26 @@ SQLALCHEMY_URL = "postgresql://{user}:{pass}@{host}:{port}/{db}".format(**redshi
 BROKER_URL = 'amqp://{user}:{pass}@{host}:5672/{vhost}'.format(**RABBITMQ)
 CELERY_IMPORTS = ('tasks', )
 CELERY_RESULT_BACKEND = ''
+CELERYD_PREFETCH_MULTIPLIER = 1
+CELERY_ACCEPT_CONTENT = ['pickle']
+
+QUEUE_ARGS = {'x-ha-policy': 'all'}
+CELERY_QUEUES = (
+    Queue('fbid_hourly', routing_key='hourly.fbid', queue_arguments=QUEUE_ARGS),
+    Queue('friend_fbid_hourly', routing_key='hourly.friend_fbid', queue_arguments=QUEUE_ARGS),
+    Queue('ip_hourly', routing_key='hourly.ip', queue_arguments=QUEUE_ARGS),
+    Queue('visit_hourly', routing_key='hourly.visit', queue_arguments=QUEUE_ARGS),
+    Queue('misc_hourly', routing_key='hourly.misc', queue_arguments=QUEUE_ARGS),
+)
+
+CELERY_ROUTES = {
+    'tasks.fbid_load_hour': {'queue': 'fbid_hourly', 'routing_key': 'hourly.fbid'},
+    'tasks.friend_fbid_load_hour': {'queue': 'friend_fbid_hourly', 'routing_key': 'hourly.friend_fbid'},
+    'tasks.ip_load_hour': {'queue': 'ip_hourly', 'routing_key': 'hourly.ip'},
+    'tasks.visit_load_hour': {'queue': 'visit_hourly', 'routing_key': 'hourly.visit'},
+    'tasks.misc_load_hour': {'queue': 'misc_hourly', 'routing_key': 'hourly.misc'},
+}
+
+CELERY_IMPORTS = [
+    'tasks',
+]

@@ -1,4 +1,5 @@
 import celery
+import settings
 
 from loaders.fbid_fact_loader import FbidFactLoader
 from loaders.visit_fact_loader import VisitFactLoader
@@ -6,50 +7,37 @@ from loaders.ip_fact_loader import IpFactLoader
 from loaders.friend_fbid_fact_loader import FriendFbidFactLoader
 from loaders.misc_fact_loader import MiscFactLoader
 
-from db.base import engine
+from db.utils import checkout_connection
 
-class SqlAlchemyTask(celery.Task):
-    """Abstract Celery Task to make sure a connection is 
-    available and is closed on task completion"""
-    abstract = True
+app = celery.Celery('forklift')
+app.config_from_object('settings')
+app.autodiscover_tasks(['tasks']) 
 
-    def run(self, *args):
-        connection = engine.connect()
-        try:
-            with connection.begin_nested():
-                self.do_work(connection, *args)                
-        finally:
-            connection.close()
+@app.task
+def fbid_load_hour(hour):
+    with checkout_connection() as connection:
+        FbidFactLoader().load_hour(hour, connection)
 
 
-class HourlyLoaderTask(SqlAlchemyTask):
-    abstract = True
-
-    def do_work(self, connection, hour):
-        self.loader.load_hour(hour, connection)
-
-
-class FbidHourlyLoaderTask(HourlyLoaderTask):
-    def __init__(self):
-        self.loader = FbidFactLoader()
+@app.task
+def friend_fbid_load_hour(hour):
+    with checkout_connection() as connection:
+        FriendFbidFactLoader().load_hour(hour, connection)
 
 
-class VisitFactLoaderTask(HourlyLoaderTask):
-    def __init__(self):
-        self.loader = VisitFactLoader()
+@app.task
+def visit_load_hour(hour):
+    with checkout_connection() as connection:
+        VisitFactLoader().load_hour(hour, connection)
 
 
-class IpFactLoaderTask(HourlyLoaderTask):
-    def __init__(self):
-        self.loader = IpFactLoader()
+@app.task
+def misc_load_hour(hour):
+    with checkout_connection() as connection:
+        MiscFactLoader().load_hour(hour, connection)
 
 
-class FriendFbidFactLoaderTask(HourlyLoaderTask):
-    def __init__(self):
-        self.loader = FriendFbidFactLoader()
-
-
-class MiscFactLoaderTask(HourlyLoaderTask):
-    def __init__(self):
-        self.loader = MiscFactLoader()
-
+@app.task
+def ip_load_hour(hour):
+    with checkout_connection() as connection:
+        IpFactLoader().load_hour(hour, connection)

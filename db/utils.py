@@ -1,6 +1,7 @@
 from logging import debug, info
 from sqlalchemy.exc import ProgrammingError
 from contextlib import contextmanager
+from db.base import engine
 
 
 DOES_NOT_EXIST_MESSAGE_TEMPLATE = '"{0}" does not exist'
@@ -37,3 +38,13 @@ def staging_table(destination_table_name, connection):
     create_temporary_table(staging_table_name, destination_table_name, connection)
     yield staging_table_name 
     drop_table(staging_table_name, connection)
+
+
+@contextmanager
+def checkout_connection():
+    connection = engine.connect()
+    try:
+        with connection.begin_nested():
+            yield connection
+    finally:
+        connection.close()
