@@ -42,3 +42,36 @@ CELERY_ROUTES = {
 CELERY_IMPORTS = [
     'tasks',
 ]
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': True,
+    'formatters': {
+        'console': {
+            'format': '[%(asctime)s][%(levelname)s] %(name)s %(filename)s:%(funcName)s:%(lineno)d | %(message)s',
+            'datefmt': '%H:%M:%S',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'DEBUG',
+            'class': 'logging.StreamHandler',
+            'formatter': 'console',
+        },
+    },
+    'loggers': {
+        '': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+        },
+    }
+}
+
+if os.environ['ENV'] in ('staging', 'production'):
+    LOGGING['root']['level'] = 'INFO' 
+    LOGGING['handlers']['sentry'] = {
+        'level': 'INFO',
+        'class': 'raven.handlers.logging.SentryHandler',
+        'formatter': 'verbose', 
+    } 
+    LOGGING['loggers'][''].setdefault('handlers', []).append('sentry')

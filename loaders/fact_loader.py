@@ -18,10 +18,11 @@ class HourlyFactLoader(object):
         return ["events.created between '{hour}' and timestamp '{hour}' + interval '1 hour'".format(hour=hour)]
 
 
-    def load_hour(self, hour, connection):
+    def load_hour(self, hour, connection, logger):
         with staging_table(self.destination_table(), connection) as staging_table_name:
             self.stage_hour(hour, staging_table_name, connection)
             self.upsert(hour, staging_table_name, self.destination_table(), connection)
+            logger.info('Completed load of hour {}'.format(hour))
 
 
     def stage_hour(self, hour, staging_table_name, connection):

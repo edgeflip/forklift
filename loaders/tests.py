@@ -18,6 +18,9 @@ from .misc_fact_loader import MiscFactLoader
 
 from testing import ForkliftTestCase
 
+import logging
+logger = logging.getLogger(__name__)
+
 class LoaderTestCase(ForkliftTestCase):
 
     def visitor_templates(self):
@@ -137,7 +140,7 @@ class HourlyLoaderTestCase(LoaderTestCase):
         """.format(self.destination_table, self.campaign_id, self.hour))
 
     def test_load(self):
-        self.loader.load_hour(self.hour, self.connection)
+        self.loader.load_hour(self.hour, self.connection, logger)
         self.assertSingleResult({'donated': 3}, self.get_donated_total())
 
 

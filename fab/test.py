@@ -68,7 +68,7 @@ def test(path='', env=None, *args, **kws):
     # Test #
 
     with workon(env):
-        fab.local(' '.join(['nosetests'] + flags))
+        fab.local('ENV=development ' + ' '.join(['nosetests'] + flags))
 
 
 __test__ = False # In case nose gets greedy
