@@ -1,6 +1,8 @@
 import celery
-from celery.log import get_task_logger
+import logging
+import logging.config
 import settings
+from celery.utils.log import get_task_logger
 
 from loaders.fbid_fact_loader import FbidFactLoader
 from loaders.visit_fact_loader import VisitFactLoader
@@ -14,7 +16,7 @@ app = celery.Celery('forklift')
 app.config_from_object('settings')
 app.autodiscover_tasks(['tasks']) 
 
-logger = get_task_logger(__name__)
+logger = get_task_logger('grackle')
 
 @app.task
 def fbid_load_hour(hour):

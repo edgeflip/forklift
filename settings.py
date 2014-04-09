@@ -1,6 +1,8 @@
 import os
 import pymlconf
 from kombu import Queue
+import logging
+import logging.config
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(PROJECT_ROOT)
@@ -58,20 +60,29 @@ LOGGING = {
             'class': 'logging.StreamHandler',
             'formatter': 'console',
         },
+        'syslog': {
+            'level': 'DEBUG',
+            'class': 'logging.handlers.SysLogHandler',
+            'formatter': 'console',
+        },
+    },
+    'root': {
+        'handlers': ['console', 'syslog'],
+        'level': 'DEBUG',
     },
     'loggers': {
-        '': {
-            'handlers': ['console'],
+        'grackle': {
             'level': 'DEBUG',
         },
     }
 }
 
 if os.environ['ENV'] in ('staging', 'production'):
-    LOGGING['root']['level'] = 'INFO' 
+    LOGGING['root']['level'] = 'INFO'
     LOGGING['handlers']['sentry'] = {
         'level': 'INFO',
         'class': 'raven.handlers.logging.SentryHandler',
-        'formatter': 'verbose', 
-    } 
-    LOGGING['loggers'][''].setdefault('handlers', []).append('sentry')
+        'formatter': 'console',
+    }
+    LOGGING['loggers']['grackle'].setdefault('handlers', []).append('sentry')
+logging.config.dictConfig(LOGGING)
