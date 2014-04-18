@@ -1,5 +1,5 @@
 import base
 import aggregates
-import dimension
-import fact
+import dimension_metadata
+import fact_metadata
 import raw

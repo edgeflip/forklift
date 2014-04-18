@@ -6,7 +6,7 @@ from forklift.db.utils import staging_table
 from forklift.models.base import Base
 from forklift.models.raw import Event, Visit, Visitor
 from forklift.warehouse.definition import HourlyAggregateTable
-from forklift.warehouse.classes import Fact, Dimension
+from forklift.warehouse.columns import Fact, Dimension
 import forklift.loaders.fact.hourly as loaders
 
 from forklift.testing import ForkliftTestCase

@@ -2,8 +2,8 @@ from .base import Base
 from sqlalchemy import Column, Integer, String
 
 
-class Dimension(Base):
-    __tablename__ = 'dimensions'
+class DimensionMetadata(Base):
+    __tablename__ = 'dimension_metadata'
 
     dimension_id = Column(Integer, primary_key=True)
     slug = Column(String)

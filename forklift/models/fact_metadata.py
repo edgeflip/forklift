@@ -1,8 +1,8 @@
 from .base import Base
 from sqlalchemy import Column, Integer, String
 
-class Fact(Base):
-    __tablename__ = 'facts'
+class FactMetadata(Base):
+    __tablename__ = 'fact_metadata'
 
     fact_id = Column(Integer, primary_key=True)
     slug = Column(String)
