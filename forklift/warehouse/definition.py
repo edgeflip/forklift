@@ -1,5 +1,5 @@
 from .classes import Fact, Dimension
-from forklift.core.slugs import IP_SLUG, FBID_SLUG, VISIT_SLUG, FRIEND_SLUG, MISC_SLUG
+from forklift.settings import IP_SLUG, FBID_SLUG, VISIT_SLUG, FRIEND_SLUG, MISC_SLUG
 from sqlalchemy import Integer, BigInteger, DateTime, String
 
 

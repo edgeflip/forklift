@@ -1,4 +1,5 @@
 from forklift.db.utils import staging_table
+from forklift.warehouse.definition import FbidFactsHourly, FriendFbidFactsHourly, IpFactsHourly, MiscFactsHourly, VisitFactsHourly
 
 class HourlyFactLoader(object):
 
@@ -69,3 +70,41 @@ group by
                 target_table=target_table_name,
                 staging_table=staging_table_name,
             ))
+
+
+class FbidHourlyFactLoader(HourlyFactLoader):
+    aggregate_table = FbidFactsHourly
+    joins = [
+        'join visits using (visit_id)',
+        'join visitors using (visitor_id)',
+    ]
+    dimension_source = 'visitors'
+
+
+class FriendFbidHourlyFactLoader(HourlyFactLoader):
+    joins = []
+    aggregate_table = FriendFbidFactsHourly
+    dimension_source = 'events'
+    
+    def where_expressions(self, hour):
+        return super(FriendFbidHourlyFactLoader, self).where_expressions(hour) + ['friend_fbid is not null']
+
+
+class IpHourlyFactLoader(HourlyFactLoader):
+    joins = [
+        'join visits using (visit_id)',
+    ]
+    aggregate_table = IpFactsHourly
+    dimension_source = 'visits'
+
+
+class MiscHourlyFactLoader(HourlyFactLoader):
+    joins = []
+    aggregate_table = MiscFactsHourly
+    dimension_source = None
+
+
+class VisitHourlyFactLoader(HourlyFactLoader):
+    joins = []
+    aggregate_table = VisitFactsHourly
+    dimension_source = 'events'

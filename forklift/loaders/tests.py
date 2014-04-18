@@ -7,13 +7,7 @@ from forklift.models.base import Base
 from forklift.models.raw import Event, Visit, Visitor
 from forklift.warehouse.definition import HourlyAggregateTable
 from forklift.warehouse.classes import Fact, Dimension
-
-from .fact_loader import HourlyFactLoader
-from .fbid_fact_loader import FbidFactLoader
-from .visit_fact_loader import VisitFactLoader
-from .ip_fact_loader import IpFactLoader
-from .friend_fbid_fact_loader import FriendFbidFactLoader
-from .misc_fact_loader import MiscFactLoader
+import forklift.loaders.fact.hourly as loaders
 
 from forklift.testing import ForkliftTestCase
 
@@ -109,7 +103,7 @@ class TestFactsHourly(HourlyAggregateTable):
         ),
     ]
 
-class TestLoader(HourlyFactLoader):
+class TestLoader(loaders.HourlyFactLoader):
     aggregate_table = TestFactsHourly
     joins = [
         'join visits using (visit_id)',
@@ -193,7 +187,7 @@ class HourlyLoaderTestCase(LoaderTestCase):
 
 class FbidFactLoaderTestCase(LoaderTestCase):
     def test_load(self):
-        loader = FbidFactLoader()
+        loader = loaders.FbidHourlyFactLoader()
         with staging_table(loader.destination_table(), self.connection) as staging_table_name:
             loader.stage_hour(self.hour, staging_table_name, self.connection)
             result = self.connection.execute("""
@@ -219,7 +213,7 @@ class FbidFactLoaderTestCase(LoaderTestCase):
 
 class VisitFactLoaderTestCase(LoaderTestCase):
     def test_load(self):
-        loader = VisitFactLoader()
+        loader = loaders.VisitHourlyFactLoader()
         with staging_table(loader.destination_table(), self.connection) as staging_table_name:
             loader.stage_hour(self.hour, staging_table_name, self.connection)
             result = self.connection.execute("""
@@ -241,7 +235,7 @@ class VisitFactLoaderTestCase(LoaderTestCase):
 
 class IpFactLoaderTestCase(LoaderTestCase):
     def test_stage_hour(self):
-        loader = IpFactLoader()
+        loader = loaders.IpHourlyFactLoader()
         with staging_table(loader.destination_table(), self.connection) as staging_table_name:
             loader.stage_hour(self.hour, staging_table_name, self.connection)
             result = self.connection.execute("""
@@ -258,7 +252,7 @@ class IpFactLoaderTestCase(LoaderTestCase):
 
 class FriendFbidFactLoaderTestCase(LoaderTestCase):
     def test_stage_hour(self):
-        loader = FriendFbidFactLoader()
+        loader = loaders.FriendFbidHourlyFactLoader()
         with staging_table(loader.destination_table(), self.connection) as staging_table_name:
             loader.stage_hour(self.hour, staging_table_name, self.connection)
             result = self.connection.execute("""
@@ -275,7 +269,7 @@ class FriendFbidFactLoaderTestCase(LoaderTestCase):
 
 class MiscFactLoaderTestCase(LoaderTestCase):
     def test_stage_hour(self):
-        loader = MiscFactLoader()
+        loader = loaders.MiscHourlyFactLoader()
         with staging_table(loader.destination_table(), self.connection) as staging_table_name:
             loader.stage_hour(self.hour, staging_table_name, self.connection)
             result = self.connection.execute("""
