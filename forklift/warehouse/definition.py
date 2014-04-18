@@ -6,7 +6,7 @@ from sqlalchemy import Integer, BigInteger, DateTime, String
 class HourlyAggregateTable(object):
     slug = None
 
-    _common_dimensions = [
+    common_dimensions = (
         Dimension(
             slug='campaign_id',
             pretty_name='Campaign ID',
@@ -20,8 +20,8 @@ class HourlyAggregateTable(object):
             column_name='hour',
             datatype=DateTime
         )
-    ]
-    _extra_dimensions = []
+    )
+    extra_dimensions = ()
 
 
     @classmethod
@@ -31,22 +31,17 @@ class HourlyAggregateTable(object):
 
     @classmethod
     def columns(cls):
-        return cls.dimensions() + cls.facts()
+        return cls.dimensions() + cls.facts
 
 
     @classmethod
     def dimensions(cls):
-        return cls._common_dimensions + cls._extra_dimensions
-
-
-    @classmethod
-    def facts(cls):
-        return cls._facts
+        return cls.common_dimensions + cls.extra_dimensions
 
 
 class FbidFactsHourly(HourlyAggregateTable):
     slug = FBID_SLUG
-    _facts = [
+    facts = (
         Fact(
             slug='fbids_authorized',
             pretty_name='Unique Authorized Users',
@@ -72,9 +67,9 @@ class FbidFactsHourly(HourlyAggregateTable):
             pretty_name='Users who shared',
             expression="count(distinct case when events.type='shared' then visitors.fbid else null end)",
         ),
-    ]
+    )
 
-    _extra_dimensions = [
+    extra_dimensions = (
         Dimension(
             slug=FBID_SLUG,
             pretty_name='FBID',
@@ -82,20 +77,20 @@ class FbidFactsHourly(HourlyAggregateTable):
             source_table='visitors',
             datatype=BigInteger
         ),
-    ]
+    )
 
 
 class FriendFbidFactsHourly(HourlyAggregateTable):
     slug = FRIEND_SLUG
-    _facts = [
+    facts = (
         Fact(
             slug='friends_shared_with',
             pretty_name='Unique Friends shared with',
             expression="count(distinct case when events.type='shared' then events.friend_fbid else null end)",
         ),
-    ]
+    )
 
-    _extra_dimensions = [
+    extra_dimensions = (
         Dimension(
             slug=FRIEND_SLUG,
             pretty_name='Friend FBID',
@@ -103,12 +98,12 @@ class FriendFbidFactsHourly(HourlyAggregateTable):
             source_table='events',
             datatype=BigInteger,
         ),
-    ]
+    )
 
 
 class VisitFactsHourly(HourlyAggregateTable):
     slug = VISIT_SLUG
-    _facts = [
+    facts = (
         Fact(
             slug='visit_ids',
             pretty_name='Visit Ids',
@@ -134,9 +129,9 @@ class VisitFactsHourly(HourlyAggregateTable):
             pretty_name='Visits with shares',
             expression="count(distinct case when events.type='shared' then events.visit_id else null end)",
         ),
-    ]
+    )
 
-    _extra_dimensions = [
+    extra_dimensions = (
         Dimension(
             slug=VISIT_SLUG,
             pretty_name='Visit',
@@ -144,12 +139,12 @@ class VisitFactsHourly(HourlyAggregateTable):
             source_table='events',
             datatype=BigInteger,
         ),
-    ]
+    )
 
 
 class MiscFactsHourly(HourlyAggregateTable):
     slug = MISC_SLUG
-    _facts = [
+    facts = (
         Fact(
             slug='visitors',
             pretty_name='Visitors',
@@ -180,12 +175,12 @@ class MiscFactsHourly(HourlyAggregateTable):
             pretty_name='Clickbacks',
             expression="sum(case when events.type='clickback' then 1 else 0 end)",
         ),
-    ]
+    )
 
 
 class IpFactsHourly(HourlyAggregateTable):
     slug = IP_SLUG
-    _facts = [
+    facts = (
         Fact(
             slug='ip_session_start',
             pretty_name='IP Session Start',
@@ -211,9 +206,9 @@ class IpFactsHourly(HourlyAggregateTable):
             pretty_name='IPs Authorized',
             expression="count(distinct case when events.type='authorized' then ip else null end)",
         ),
-    ]
+    )
 
-    _extra_dimensions = [
+    extra_dimensions = (
         Dimension(
             slug=IP_SLUG,
             pretty_name='IP Address',
@@ -221,5 +216,5 @@ class IpFactsHourly(HourlyAggregateTable):
             source_table='visits',
             datatype=String,
         ),
-    ]
+    )
 

@@ -10,8 +10,8 @@ class HourlyAggregateMixin(object):
 
     @classmethod
     def sqlalchemy_columns(cls):
-        dims = [Column(dimension.column_name(), dimension.datatype, primary_key=True) for dimension in cls.table.dimensions()]
-        facts = [Column(fact.slug, Integer) for fact in cls.table.facts()]
+        dims = [Column(dimension.column_name, dimension.datatype, primary_key=True) for dimension in cls.table.dimensions()]
+        facts = [Column(fact.slug, Integer) for fact in cls.table.facts]
         return dims + facts
 
 

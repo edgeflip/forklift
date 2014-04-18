@@ -21,9 +21,9 @@ fileConfig(config.config_file_name)
 
 # Import models
 sys.path.append(os.path.abspath(os.curdir))
-from models.base import Base
+from forklift.models.base import Base
 target_metadata = Base.metadata
-from settings import SQLALCHEMY_URL
+from forklift.settings import SQLALCHEMY_URL
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

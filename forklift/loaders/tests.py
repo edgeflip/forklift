@@ -85,15 +85,15 @@ class LoaderTestCase(ForkliftTestCase):
 
 class TestFactsHourly(HourlyAggregateTable):
     slug = 'test'
-    _facts = [
+    facts = (
         Fact(
             slug='donated',
             pretty_name='Unique Event Ids Donated',
             expression="count(distinct case when events.type='donated' then events.event_id else null end)",
         ),
-    ]
+    )
 
-    _extra_dimensions = [
+    extra_dimensions = (
         Dimension(
             slug='event_id',
             pretty_name='Event ID',
@@ -101,13 +101,13 @@ class TestFactsHourly(HourlyAggregateTable):
             source_table='events',
             datatype=Integer,
         ),
-    ]
+    )
 
 class TestLoader(loaders.HourlyFactLoader):
     aggregate_table = TestFactsHourly
-    joins = [
+    joins = (
         'join visits using (visit_id)',
-    ]
+    )
     dimension_source = 'visits'
 
 
@@ -188,7 +188,7 @@ class HourlyLoaderTestCase(LoaderTestCase):
 class FbidFactLoaderTestCase(LoaderTestCase):
     def test_load(self):
         loader = loaders.FbidHourlyFactLoader()
-        with staging_table(loader.destination_table(), self.connection) as staging_table_name:
+        with staging_table(loader.destination_table, self.connection) as staging_table_name:
             loader.stage_hour(self.hour, staging_table_name, self.connection)
             result = self.connection.execute("""
                 select 
@@ -214,7 +214,7 @@ class FbidFactLoaderTestCase(LoaderTestCase):
 class VisitFactLoaderTestCase(LoaderTestCase):
     def test_load(self):
         loader = loaders.VisitHourlyFactLoader()
-        with staging_table(loader.destination_table(), self.connection) as staging_table_name:
+        with staging_table(loader.destination_table, self.connection) as staging_table_name:
             loader.stage_hour(self.hour, staging_table_name, self.connection)
             result = self.connection.execute("""
                 select
@@ -236,7 +236,7 @@ class VisitFactLoaderTestCase(LoaderTestCase):
 class IpFactLoaderTestCase(LoaderTestCase):
     def test_stage_hour(self):
         loader = loaders.IpHourlyFactLoader()
-        with staging_table(loader.destination_table(), self.connection) as staging_table_name:
+        with staging_table(loader.destination_table, self.connection) as staging_table_name:
             loader.stage_hour(self.hour, staging_table_name, self.connection)
             result = self.connection.execute("""
                 select sum(ips_authorized) as ips_authorized
@@ -253,7 +253,7 @@ class IpFactLoaderTestCase(LoaderTestCase):
 class FriendFbidFactLoaderTestCase(LoaderTestCase):
     def test_stage_hour(self):
         loader = loaders.FriendFbidHourlyFactLoader()
-        with staging_table(loader.destination_table(), self.connection) as staging_table_name:
+        with staging_table(loader.destination_table, self.connection) as staging_table_name:
             loader.stage_hour(self.hour, staging_table_name, self.connection)
             result = self.connection.execute("""
                 select sum(friends_shared_with) as friends_shared_with
@@ -270,7 +270,7 @@ class FriendFbidFactLoaderTestCase(LoaderTestCase):
 class MiscFactLoaderTestCase(LoaderTestCase):
     def test_stage_hour(self):
         loader = loaders.MiscHourlyFactLoader()
-        with staging_table(loader.destination_table(), self.connection) as staging_table_name:
+        with staging_table(loader.destination_table, self.connection) as staging_table_name:
             loader.stage_hour(self.hour, staging_table_name, self.connection)
             result = self.connection.execute("""
                 select sum(authorizations) as authorizations

@@ -89,12 +89,6 @@ def install_deps():
     l('sudo apt-get install -y {}'.format(
         ' '.join(dep.strip() for dep in deps)))
 
-    # Install fake dynamo:
-    if 'dev' in roles:
-        gems = l('gem list --local --no-versions', capture=True)
-        if 'fake_dynamo' not in gems.split():
-            l('sudo gem install fake_dynamo --version 0.2.3')
-
 
 @fab.task(name='virtualenv')
 def make_virtualenv(name=None):
@@ -207,36 +201,6 @@ def setup_db(env=None, force='0', testdata='1'):
         if not database_exists:
             l('sudo -u postgres psql -c "create database {DATABASE} with owner={USER} template=template0 encoding=\'utf-8\'"'.format(**sql_context))
 
-        # Application schema initialization
-        #manage('syncdb', env=env, flags=['migrate'])
-
-        # Load test data:
-        #if true(testdata):
-            #manage('loaddata', ['redshift_testdata'], env=env)
-
-
-@fab.task(name='alembic')
-def alembic(task, message=None, env=None):
-    """Create or execute a migration with Alembic
-
-    Task options:
-    auto - Automatically generate a migration based on existing models (message required)
-    manual - Create a base migration template (message required)
-    migrate - Execute any pending migrations
-
-    Examples:
-        alembic:auto,message='Add initial tables'
-        alembic:manual,message='Add ETL tables'
-        alembic:migrate
-
-    """
-    config_path = join(BASEDIR, 'conf.d', 'database.conf')
-
-    with workon(env):
-            l('pip install {}'.format(
-                ' '.join('-r ' + path for path in reqs_paths
-                         if os.path.exists(join(BASEDIR, path)))
-            ))
 
 # Helpers #
 

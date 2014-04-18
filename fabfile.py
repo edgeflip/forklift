@@ -11,9 +11,7 @@ Requires provisioning of Fabric >= 1.6.
 """
 import subprocess
 
-from fabric import api as fab
-
-from fab import BASEDIR, build, serve, test
+from fab import build, serve, test
 
 
 def _subprocess(*args, **kws):

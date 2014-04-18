@@ -1,4 +1,3 @@
-from nose.tools import assert_raises
 from sqlalchemy.exc import ProgrammingError
 from forklift.testing import ForkliftTestCase
 from forklift.db.utils import staging_table
@@ -16,4 +15,5 @@ class DbTestCase(ForkliftTestCase):
                 self.connection.execute('select * from {}'.format(staging_table_name))
             )
 
-        assert_raises(ProgrammingError, self.connection.execute, 'select * from {}'.format(save_staging_table_name))
+        with self.assertRaises(ProgrammingError):
+            self.connection.execute('select * from {}'.format(save_staging_table_name))

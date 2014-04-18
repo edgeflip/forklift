@@ -1,18 +1,27 @@
+from abc import abstractproperty
+from textwrap import dedent
+
 from forklift.db.utils import staging_table
 from forklift.warehouse.definition import FbidFactsHourly, FriendFbidFactsHourly, IpFactsHourly, MiscFactsHourly, VisitFactsHourly
 
 class HourlyFactLoader(object):
+    joins = ()
+
+    @abstractproperty
+    def aggregate_table(self):
+        return None
 
     def columns(self):
-        return ['hour'] + [column.column_name() for column in self.aggregate_table.columns() if column.column_name() != 'hour']
+        return ['hour'] + [column.column_name for column in self.aggregate_table.columns() if column.column_name != 'hour']
 
 
+    @property
     def destination_table(self):
         return self.aggregate_table.tablename()
 
 
     def dimensions(self):
-        return [dimension.column_name() for dimension in self.aggregate_table.dimensions() if dimension.column_name() != 'hour']
+        return [dimension.column_name for dimension in self.aggregate_table.dimensions() if dimension.column_name != 'hour']
 
 
     def where_expressions(self, hour):
@@ -20,37 +29,37 @@ class HourlyFactLoader(object):
 
 
     def load_hour(self, hour, connection, logger):
-        with staging_table(self.destination_table(), connection) as staging_table_name:
+        with staging_table(self.destination_table, connection) as staging_table_name:
             self.stage_hour(hour, staging_table_name, connection)
-            self.upsert(hour, staging_table_name, self.destination_table(), connection)
+            self.upsert(hour, staging_table_name, self.destination_table, connection)
             logger.info('Completed load of hour {}'.format(hour))
 
 
     def stage_hour(self, hour, staging_table_name, connection):
         formatted_hour = hour.strftime("%Y-%m-%d %H:%M:%S")
         sql = """
-insert into {staging_table}
-({columns})
-select
-'{hour}',
-{dimensions},
-{facts}
-from events
-{joins}
-where 
-{where_clause}
-group by
-{dimensions}
+            insert into {staging_table}
+            ({columns})
+            select
+            '{hour}',
+            {dimensions},
+            {facts}
+            from events
+            {joins}
+            where 
+            {where_clause}
+            group by
+            {dimensions}
         """.format(
             columns=",".join(self.columns()),
             dimensions=",\n".join(self.dimensions()),
-            facts=",\n".join([fact.expression for fact in self.aggregate_table.facts()]),
+            facts=",\n".join(fact.expression for fact in self.aggregate_table.facts),
             joins="\n".join(self.joins),
             staging_table=staging_table_name,
             where_clause="and \n".join(self.where_expressions(formatted_hour)),
             hour=formatted_hour,
         )
-        connection.execute(sql)
+        connection.execute(dedent(sql))
 
 
     def upsert(self, hour, staging_table_name, target_table_name, connection):
@@ -74,37 +83,29 @@ group by
 
 class FbidHourlyFactLoader(HourlyFactLoader):
     aggregate_table = FbidFactsHourly
-    joins = [
+    joins = (
         'join visits using (visit_id)',
         'join visitors using (visitor_id)',
-    ]
-    dimension_source = 'visitors'
+    )
 
 
 class FriendFbidHourlyFactLoader(HourlyFactLoader):
-    joins = []
     aggregate_table = FriendFbidFactsHourly
-    dimension_source = 'events'
     
     def where_expressions(self, hour):
         return super(FriendFbidHourlyFactLoader, self).where_expressions(hour) + ['friend_fbid is not null']
 
 
 class IpHourlyFactLoader(HourlyFactLoader):
-    joins = [
-        'join visits using (visit_id)',
-    ]
     aggregate_table = IpFactsHourly
-    dimension_source = 'visits'
+    joins = (
+        'join visits using (visit_id)',
+    )
 
 
 class MiscHourlyFactLoader(HourlyFactLoader):
-    joins = []
     aggregate_table = MiscFactsHourly
-    dimension_source = None
 
 
 class VisitHourlyFactLoader(HourlyFactLoader):
-    joins = []
     aggregate_table = VisitFactsHourly
-    dimension_source = 'events'
