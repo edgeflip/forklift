@@ -1,7 +1,7 @@
 from logging import debug, info
 from sqlalchemy.exc import ProgrammingError
 from contextlib import contextmanager
-from db.base import engine
+from forklift.db.base import engine
 
 
 DOES_NOT_EXIST_MESSAGE_TEMPLATE = '"{0}" does not exist'

@@ -1,5 +1,5 @@
 from .fact_loader import HourlyFactLoader
-from warehouse.definition import IpFactsHourly
+from forklift.warehouse.definition import IpFactsHourly
 
 class IpFactLoader(HourlyFactLoader):
     joins = [

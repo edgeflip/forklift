@@ -1,8 +1,8 @@
 from sqlalchemy import Column, Integer, Table
 from sqlalchemy.ext.declarative import declared_attr
-from core.slugs import IP_SLUG, FBID_SLUG, VISIT_SLUG, FRIEND_SLUG, MISC_SLUG
-from warehouse.definition import IpFactsHourly, VisitFactsHourly, FriendFbidFactsHourly, FbidFactsHourly, MiscFactsHourly
-from base import Base
+from forklift.core.slugs import IP_SLUG, FBID_SLUG, VISIT_SLUG, FRIEND_SLUG, MISC_SLUG
+from forklift.warehouse.definition import IpFactsHourly, VisitFactsHourly, FriendFbidFactsHourly, FbidFactsHourly, MiscFactsHourly
+from .base import Base
 
 
 class HourlyAggregateMixin(object):

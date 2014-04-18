@@ -1,13 +1,12 @@
 import datetime
-import pytz
 from sqlalchemy import Integer, BigInteger, DateTime, String
 from sqlalchemy.exc import ProgrammingError
 
-from db.utils import staging_table
-from models.base import Base
-from models.raw import Event, Visit, Visitor
-from warehouse.definition import HourlyAggregateTable
-from warehouse.classes import Fact, Dimension
+from forklift.db.utils import staging_table
+from forklift.models.base import Base
+from forklift.models.raw import Event, Visit, Visitor
+from forklift.warehouse.definition import HourlyAggregateTable
+from forklift.warehouse.classes import Fact, Dimension
 
 from .fact_loader import HourlyFactLoader
 from .fbid_fact_loader import FbidFactLoader
@@ -16,7 +15,7 @@ from .ip_fact_loader import IpFactLoader
 from .friend_fbid_fact_loader import FriendFbidFactLoader
 from .misc_fact_loader import MiscFactLoader
 
-from testing import ForkliftTestCase
+from forklift.testing import ForkliftTestCase
 
 import logging
 logger = logging.getLogger(__name__)
@@ -62,9 +61,9 @@ class LoaderTestCase(ForkliftTestCase):
     def setUp(self):
         super(LoaderTestCase, self).setUp()
         self.campaign_id = 6
-        self.hour = datetime.datetime(2014,2,1,2,0, tzinfo=pytz.utc)
-        self.in_range = datetime.datetime(2014,2,1,2,30, tzinfo=pytz.utc)
-        self.out_of_range = datetime.datetime(2014,2,1,4, tzinfo=pytz.utc)
+        self.hour = datetime.datetime(2014,2,1,2,0)
+        self.in_range = datetime.datetime(2014,2,1,2,30)
+        self.out_of_range = datetime.datetime(2014,2,1,4)
 
         for visitor_template in self.visitor_templates():
             visitor = Visitor(fbid=visitor_template['fbid'], created=self.in_range, updated=self.in_range)

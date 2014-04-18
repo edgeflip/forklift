@@ -180,7 +180,7 @@ def setup_db(env=None, force='0', testdata='1'):
 
     """
     roles = fab.env.roles or ['dev']
-    sql_path = join(BASEDIR, 'reporting', 'sql', 'redshift')
+    sql_path = join(BASEDIR, 'forklift', 'sql')
     sql_context = {'DATABASE': 'forklift', 'USER': 'redshift', 'PASSWORD': 'root'}
 
     # Database teardown

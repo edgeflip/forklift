@@ -1,7 +1,7 @@
 from unittest import TestCase
-from db.base import engine
-from models.base import Base
 from sqlalchemy.orm.session import Session
+from forklift.db.base import engine
+from forklift.models.base import Base
 
 
 class ForkliftTestCase(TestCase):

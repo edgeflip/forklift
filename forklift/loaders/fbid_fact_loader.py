@@ -1,5 +1,5 @@
 from .fact_loader import HourlyFactLoader
-from warehouse.definition import FbidFactsHourly
+from forklift.warehouse.definition import FbidFactsHourly
 
 class FbidFactLoader(HourlyFactLoader):
     aggregate_table = FbidFactsHourly

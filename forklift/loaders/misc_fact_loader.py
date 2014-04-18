@@ -1,5 +1,5 @@
 from .fact_loader import HourlyFactLoader
-from warehouse.definition import MiscFactsHourly
+from forklift.warehouse.definition import MiscFactsHourly
 
 class MiscFactLoader(HourlyFactLoader):
     joins = []

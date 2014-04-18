@@ -1,4 +1,4 @@
-from db.utils import staging_table
+from forklift.db.utils import staging_table
 
 class HourlyFactLoader(object):
 
