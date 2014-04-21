@@ -24,7 +24,7 @@ class HourlyAggregateMixin(object):
             *columns,
             extend_existing=True
         )
-            
+
 
 class FbidFactHourly(HourlyAggregateMixin, Base):
     slug = FBID_SLUG

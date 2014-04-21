@@ -46,7 +46,7 @@ class HourlyFactLoader(object):
             {facts}
             from events
             {joins}
-            where 
+            where
             {where_clause}
             group by
             {dimensions}
@@ -91,7 +91,7 @@ class FbidHourlyFactLoader(HourlyFactLoader):
 
 class FriendFbidHourlyFactLoader(HourlyFactLoader):
     aggregate_table = FriendFbidFactsHourly
-    
+
     def where_expressions(self, hour):
         return super(FriendFbidHourlyFactLoader, self).where_expressions(hour) + ['friend_fbid is not null']
 

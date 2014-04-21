@@ -36,7 +36,7 @@ def drop_table(table_name, connection):
 def staging_table(destination_table_name, connection):
     staging_table_name = destination_table_name + '_staging'
     create_temporary_table(staging_table_name, destination_table_name, connection)
-    yield staging_table_name 
+    yield staging_table_name
     drop_table(staging_table_name, connection)
 
 

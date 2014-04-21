@@ -26,7 +26,7 @@ class LoaderTestCase(ForkliftTestCase):
                     {'type': 'shown'},
                     {'type': 'faces_page_rendered'},
                     {'type': 'donated'},
-                ], 
+                ],
                 'ip': '127.0.0.1',
             }, {
                 'events': [
@@ -34,7 +34,7 @@ class LoaderTestCase(ForkliftTestCase):
                     {'type': 'donated'},
                     {'type': 'generated', 'out_of_range': True},
                     {'type': 'shown', 'out_of_range': True},
-                ], 
+                ],
                 'ip': '8.8.8.8',
             }],
         }, {
@@ -191,9 +191,9 @@ class FbidFactLoaderTestCase(LoaderTestCase):
         with staging_table(loader.destination_table, self.connection) as staging_table_name:
             loader.stage_hour(self.hour, staging_table_name, self.connection)
             result = self.connection.execute("""
-                select 
-                    sum(fbids_authorized) as fbids_authorized, 
-                    sum(fbids_generated_friends) as fbids_generated_friends, 
+                select
+                    sum(fbids_authorized) as fbids_authorized,
+                    sum(fbids_generated_friends) as fbids_generated_friends,
                     sum(fbids_shown_friends) as fbids_shown_friends,
                     sum(fbids_face_pages) as fbids_face_pages,
                     sum(fbids_shared) as fbids_shared
@@ -202,8 +202,8 @@ class FbidFactLoaderTestCase(LoaderTestCase):
 
             expected = {
                 'fbids_authorized': 2,
-                'fbids_generated_friends': 2, 
-                'fbids_shown_friends': 2, 
+                'fbids_generated_friends': 2,
+                'fbids_shown_friends': 2,
                 'fbids_face_pages': 2,
                 'fbids_shared': 1,
             }

@@ -9,7 +9,7 @@ from forklift.db.utils import checkout_connection
 
 app = celery.Celery('forklift')
 app.config_from_object('settings')
-app.autodiscover_tasks(['tasks']) 
+app.autodiscover_tasks(['tasks'])
 
 logger = get_task_logger('grackle')
 
