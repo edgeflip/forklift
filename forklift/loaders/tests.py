@@ -2,7 +2,7 @@ import datetime
 from sqlalchemy import Integer, BigInteger, DateTime, String
 from sqlalchemy.exc import ProgrammingError
 
-from forklift.db.utils import staging_table
+from forklift.db.utils import staging_table, drop_table_if_exists
 from forklift.models.base import Base
 from forklift.models.raw import Event, Visit, Visitor
 from forklift.warehouse.definition import HourlyAggregateTable
@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 
 class LoaderTestCase(ForkliftTestCase):
 
-    def visitor_templates(self):
+    @classmethod
+    def visitor_templates(cls):
         return [{
             'fbid': 4,
             'visits': [{
@@ -52,35 +53,36 @@ class LoaderTestCase(ForkliftTestCase):
             }],
         }]
 
-    def setUp(self):
-        super(LoaderTestCase, self).setUp()
-        self.campaign_id = 6
-        self.hour = datetime.datetime(2014,2,1,2,0)
-        self.in_range = datetime.datetime(2014,2,1,2,30)
-        self.out_of_range = datetime.datetime(2014,2,1,4)
+    @classmethod
+    def setUpClass(cls):
+        super(LoaderTestCase, cls).setUpClass()
+        cls.campaign_id = 6
+        cls.hour = datetime.datetime(2014,2,1,2,0)
+        cls.in_range = datetime.datetime(2014,2,1,2,30)
+        cls.out_of_range = datetime.datetime(2014,2,1,4)
 
-        for visitor_template in self.visitor_templates():
-            visitor = Visitor(fbid=visitor_template['fbid'], created=self.in_range, updated=self.in_range)
-            self.session.add(visitor)
-            self.session.commit()
+        for visitor_template in cls.visitor_templates():
+            visitor = Visitor(fbid=visitor_template['fbid'], created=cls.in_range, updated=cls.in_range)
+            cls.session.add(visitor)
+            cls.session.commit()
             for visit_template in visitor_template['visits']:
-                visit = Visit(ip=visit_template['ip'], visitor_id=visitor.visitor_id, created=self.in_range, updated=self.in_range)
-                self.session.add(visit)
-                self.session.commit()
+                visit = Visit(ip=visit_template['ip'], visitor_id=visitor.visitor_id, created=cls.in_range, updated=cls.in_range)
+                cls.session.add(visit)
+                cls.session.commit()
                 for event_template in visit_template['events']:
-                    timestamp = self.out_of_range if 'out_of_range' in event_template else self.in_range
+                    timestamp = cls.out_of_range if 'out_of_range' in event_template else cls.in_range
                     friend_fbid = event_template['friend_fbid'] if 'friend_fbid' in event_template else None
                     event = Event(
                         event_type=event_template['type'],
                         visit_id=visit.visit_id,
                         created=timestamp,
-                        campaign_id=self.campaign_id,
+                        campaign_id=cls.campaign_id,
                         updated=timestamp,
                         event_datetime=timestamp,
                         friend_fbid=friend_fbid,
                     )
-                    self.session.add(event)
-                    self.session.commit()
+                    cls.session.add(event)
+                    cls.session.commit()
 
 
 class TestFactsHourly(HourlyAggregateTable):
@@ -116,6 +118,7 @@ class HourlyLoaderTestCase(LoaderTestCase):
     def setUp(self):
         super(HourlyLoaderTestCase, self).setUp()
         self.destination_table = 'test_facts_hourly'
+        self.inner_transaction = self.connection.begin_nested()
         self.connection.execute("""
             create table {} (
                 hour timestamp,
@@ -125,6 +128,8 @@ class HourlyLoaderTestCase(LoaderTestCase):
             )
         """.format(self.destination_table))
 
+    def tearDown(self):
+        self.inner_transaction.rollback()
 
     def get_donated_total(self):
         return self.connection.execute("""

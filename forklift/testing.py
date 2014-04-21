@@ -5,15 +5,21 @@ from forklift.models.base import Base
 
 
 class ForkliftTestCase(TestCase):
-    def setUp(self):
-        self.connection = engine.connect()
+    @classmethod
+    def setUpClass(cls):
+        cls.connection = engine.connect()
         Base.metadata.create_all(engine)
-        self.__transaction = self.connection.begin_nested()
-        self.session = Session(self.connection)
+        cls.__transaction = cls.connection.begin_nested()
+        cls.session = Session(cls.connection)
 
-    def tearDown(self):
-        self.session.close()
-        self.__transaction.rollback()
+    @classmethod
+    def tearDownClass(cls):
+        cls.session.close()
+        cls.__transaction.rollback()
+
+
+    def setUp(self):
+        self.connection = self.__class__.connection
 
 
     def assertSingleResult(self, expected, result):
