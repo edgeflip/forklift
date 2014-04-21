@@ -113,23 +113,37 @@ class TestLoader(loaders.HourlyFactLoader):
     dimension_source = 'visits'
 
 
-class HourlyLoaderTestCase(LoaderTestCase):
+class GenericHourlyLoaderTestCase(LoaderTestCase):
     loader = TestLoader()
-    def setUp(self):
-        super(HourlyLoaderTestCase, self).setUp()
-        self.destination_table = 'test_facts_hourly'
-        self.inner_transaction = self.connection.begin_nested()
-        self.connection.execute("""
+
+    @classmethod
+    def setUpClass(cls):
+        super(GenericHourlyLoaderTestCase, cls).setUpClass()
+        cls.destination_table = 'test_facts_hourly'
+        cls.transaction = cls.connection.begin_nested()
+        cls.connection.execute("""
             create table {} (
                 hour timestamp,
                 campaign_id integer,
                 event_id integer,
                 donated integer
             )
-        """.format(self.destination_table))
+        """.format(cls.destination_table))
+
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.transaction.rollback()
+
+
+    def setUp(self):
+        self.transaction = self.connection.begin_nested()
+        self.destination_table = self.__class__.destination_table
+
 
     def tearDown(self):
-        self.inner_transaction.rollback()
+        self.transaction.rollback()
+
 
     def get_donated_total(self):
         return self.connection.execute("""
@@ -190,8 +204,8 @@ class HourlyLoaderTestCase(LoaderTestCase):
 
 
 
-class FbidFactLoaderTestCase(LoaderTestCase):
-    def test_load(self):
+class EdgeflipLoaderTestCase(LoaderTestCase):
+    def test_stage_hour_fbid(self):
         loader = loaders.FbidHourlyFactLoader()
         with staging_table(loader.destination_table, self.connection) as staging_table_name:
             loader.stage_hour(self.hour, staging_table_name, self.connection)
@@ -216,8 +230,7 @@ class FbidFactLoaderTestCase(LoaderTestCase):
             self.assertSingleResult(expected, result)
 
 
-class VisitFactLoaderTestCase(LoaderTestCase):
-    def test_load(self):
+    def test_stage_hour_visit(self):
         loader = loaders.VisitHourlyFactLoader()
         with staging_table(loader.destination_table, self.connection) as staging_table_name:
             loader.stage_hour(self.hour, staging_table_name, self.connection)
@@ -238,8 +251,7 @@ class VisitFactLoaderTestCase(LoaderTestCase):
             self.assertSingleResult(expected, result)
 
 
-class IpFactLoaderTestCase(LoaderTestCase):
-    def test_stage_hour(self):
+    def test_stage_hour_ip(self):
         loader = loaders.IpHourlyFactLoader()
         with staging_table(loader.destination_table, self.connection) as staging_table_name:
             loader.stage_hour(self.hour, staging_table_name, self.connection)
@@ -255,8 +267,7 @@ class IpFactLoaderTestCase(LoaderTestCase):
             self.assertSingleResult(expected, result)
 
 
-class FriendFbidFactLoaderTestCase(LoaderTestCase):
-    def test_stage_hour(self):
+    def test_stage_hour_friend(self):
         loader = loaders.FriendFbidHourlyFactLoader()
         with staging_table(loader.destination_table, self.connection) as staging_table_name:
             loader.stage_hour(self.hour, staging_table_name, self.connection)
@@ -272,8 +283,7 @@ class FriendFbidFactLoaderTestCase(LoaderTestCase):
             self.assertSingleResult(expected, result)
 
 
-class MiscFactLoaderTestCase(LoaderTestCase):
-    def test_stage_hour(self):
+    def test_stage_hour_misc(self):
         loader = loaders.MiscHourlyFactLoader()
         with staging_table(loader.destination_table, self.connection) as staging_table_name:
             loader.stage_hour(self.hour, staging_table_name, self.connection)
