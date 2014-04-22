@@ -38,10 +38,3 @@ def misc_load_hour(hour):
 def ip_load_hour(hour):
     with checkout_connection() as connection:
         loaders.IpHourlyFactLoader().load_hour(hour, connection, logger)
-
-
-@app.task
-def load_hour(hour):
-    tasks = (fbid_load_hour, friend_fbid_load_hour, visit_load_hour, misc_load_hour, ip_load_hour)
-    for task in tasks:
-        task.apply_async(hour)
