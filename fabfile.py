@@ -10,8 +10,10 @@ Requires provisioning of Fabric >= 1.6.
 
 """
 import subprocess
+from os.path import join
 
-from fab import build, serve, test
+from fab import build, serve, test, virtualenv_path
+import fabric.api as fab
 
 
 def _subprocess(*args, **kws):
@@ -23,3 +25,8 @@ def _subprocess(*args, **kws):
         except KeyboardInterrupt:
             # Pass ctrl+c to the shell
             pass
+
+@fab.task(name='shell')
+def start_shell(env='development'):
+    """Open a development shell"""
+    _subprocess(join(virtualenv_path('forklift'), 'python'), env={'ENV': env})

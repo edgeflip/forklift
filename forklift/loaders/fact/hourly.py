@@ -1,10 +1,11 @@
-from abc import abstractproperty
+from abc import abstractproperty, ABCMeta
 from textwrap import dedent
 
 from forklift.db.utils import staging_table
 from forklift.warehouse.definition import FbidFactsHourly, FriendFbidFactsHourly, IpFactsHourly, MiscFactsHourly, VisitFactsHourly
 
 class HourlyFactLoader(object):
+    __metaclass__ = ABCMeta
     joins = ()
 
     @abstractproperty

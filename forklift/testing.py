@@ -18,10 +18,6 @@ class ForkliftTestCase(TestCase):
         cls.__transaction.rollback()
 
 
-    def setUp(self):
-        self.connection = self.__class__.connection
-
-
     def assertSingleResult(self, expected, result):
         num_results = 0
         for row in result:

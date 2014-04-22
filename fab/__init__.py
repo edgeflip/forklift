@@ -1,4 +1,4 @@
-import os.path
+import os
 from os.path import join
 
 from fabric import api as fab
@@ -19,6 +19,10 @@ def true(inp):
         return False
 
 
+def virtualenv_path(env):
+    return join(os.getenv('HOME'), '.virtualenvs', env, 'bin') if env else ''
+
+
 def workon(env=None):
     """Context manager which sets the PATH to that of the named virtualenv
 
@@ -34,5 +38,4 @@ def workon(env=None):
     # prefixing "source /../virtualenvwrapper" (to make that command
     # available). Prepending to the PATH, though it requires knowledge of the
     # env's full path, is much lighter weight.
-    path = join('$HOME', '.virtualenvs', env, 'bin') if env else ''
-    return fab.path(path, behavior='prepend')
+    return fab.path(virtualenv_path(env), behavior='prepend')

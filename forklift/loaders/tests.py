@@ -138,7 +138,6 @@ class GenericHourlyLoaderTestCase(LoaderTestCase):
 
     def setUp(self):
         self.transaction = self.connection.begin_nested()
-        self.destination_table = self.__class__.destination_table
 
 
     def tearDown(self):
