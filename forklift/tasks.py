@@ -5,8 +5,8 @@ import forklift.loaders.fact.hourly as loaders
 from forklift.db.utils import checkout_connection
 
 app = celery.Celery('forklift')
-app.config_from_object('settings')
-app.autodiscover_tasks(['tasks'])
+app.config_from_object('forklift.settings')
+app.autodiscover_tasks(['forklift.tasks'])
 
 logger = get_task_logger('grackle')
 

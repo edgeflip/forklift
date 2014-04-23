@@ -19,7 +19,7 @@ SQLALCHEMY_URL = "postgresql://{user}:{pass}@{host}:{port}/{db}".format(**redshi
 
 # Celery
 BROKER_URL = 'amqp://{user}:{pass}@{host}:5672/{vhost}'.format(**RABBITMQ)
-CELERY_IMPORTS = ('tasks', )
+CELERY_IMPORTS = ('forklift.tasks', )
 CELERY_RESULT_BACKEND = ''
 CELERYD_PREFETCH_MULTIPLIER = 1
 CELERY_ACCEPT_CONTENT = ['pickle']
@@ -34,16 +34,12 @@ CELERY_QUEUES = (
 )
 
 CELERY_ROUTES = {
-    'tasks.fbid_load_hour': {'queue': 'fbid_hourly', 'routing_key': 'hourly.fbid'},
-    'tasks.friend_fbid_load_hour': {'queue': 'friend_fbid_hourly', 'routing_key': 'hourly.friend_fbid'},
-    'tasks.ip_load_hour': {'queue': 'ip_hourly', 'routing_key': 'hourly.ip'},
-    'tasks.visit_load_hour': {'queue': 'visit_hourly', 'routing_key': 'hourly.visit'},
-    'tasks.misc_load_hour': {'queue': 'misc_hourly', 'routing_key': 'hourly.misc'},
+    'forklift.tasks.fbid_load_hour': {'queue': 'fbid_hourly', 'routing_key': 'hourly.fbid'},
+    'forklift.tasks.friend_fbid_load_hour': {'queue': 'friend_fbid_hourly', 'routing_key': 'hourly.friend_fbid'},
+    'forklift.tasks.ip_load_hour': {'queue': 'ip_hourly', 'routing_key': 'hourly.ip'},
+    'forklift.tasks.visit_load_hour': {'queue': 'visit_hourly', 'routing_key': 'hourly.visit'},
+    'forklift.tasks.misc_load_hour': {'queue': 'misc_hourly', 'routing_key': 'hourly.misc'},
 }
-
-CELERY_IMPORTS = [
-    'tasks',
-]
 
 LOGGING = {
     'version': 1,
