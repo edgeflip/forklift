@@ -96,7 +96,7 @@ def make_virtualenv(name=None):
 
     Requires that OS-level dependencies have been installed.
 
-    By default, the virtualenv is named 'depot'.
+    By default, the virtualenv is named 'forklift'.
     Supply an argument ("name") to change this value:
 
         virtualenv:MY-ENV

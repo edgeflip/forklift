@@ -15,6 +15,10 @@ from os.path import join
 from fab import build, serve, test, virtualenv_path
 import fabric.api as fab
 
+fab.env.roledefs = {
+    'production': ['warehouse-production'],
+}
+
 
 def _subprocess(*args, **kws):
     # Use Popen to avoid KeyboardInterrupt messiness
