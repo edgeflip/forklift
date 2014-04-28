@@ -5,11 +5,12 @@ import logging
 import logging.config
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(PROJECT_ROOT)
+GLOBAL_CONFIG_DIR = '/etc/forklift'
 # Load configuration from conf.d directories #
 # default configuration in repo:
-config = pymlconf.ConfigManager(dirs=[os.path.join(PROJECT_ROOT, 'conf.d')],
-                                filename_as_namespace=False)
+config = pymlconf.ConfigManager(dirs=[os.path.join(PROJECT_ROOT, 'conf.d')], filename_as_namespace=False)
+if os.path.isdir(GLOBAL_CONFIG_DIR):
+    config.load_dirs([os.path.join(GLOBAL_CONFIG_DIR, 'conf.d')], filename_as_namespace=False)
 
 locals().update((key.upper(), value) for key, value in config.items())
 
