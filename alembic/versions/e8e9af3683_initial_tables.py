@@ -25,7 +25,6 @@ def upgrade():
     sa.Column('ip_visitors', sa.Integer(), nullable=True),
     sa.Column('ips_declined_auth', sa.Integer(), nullable=True),
     sa.Column('ips_authorized', sa.Integer(), nullable=True),
-    sa.PrimaryKeyConstraint('campaign_id', 'hour', 'ip')
     )
     op.create_table('events',
     sa.Column('event_id', sa.Integer(), nullable=False),
@@ -39,14 +38,12 @@ def upgrade():
     sa.Column('event_datetime', sa.DateTime(), nullable=True),
     sa.Column('updated', sa.DateTime(), nullable=True),
     sa.Column('created', sa.DateTime(), nullable=True),
-    sa.PrimaryKeyConstraint('event_id')
     )
     op.create_table('friend_fbid_facts_hourly',
     sa.Column('campaign_id', sa.Integer(), nullable=False),
     sa.Column('hour', sa.DateTime(), nullable=False),
     sa.Column('friend_fbid', sa.BigInteger(), nullable=False),
     sa.Column('friends_shared_with', sa.Integer(), nullable=True),
-    sa.PrimaryKeyConstraint('campaign_id', 'hour', 'friend_fbid')
     )
     op.create_table('fact_metadata',
     sa.Column('fact_id', sa.Integer(), nullable=False),
@@ -54,7 +51,6 @@ def upgrade():
     sa.Column('pretty_name', sa.String(), nullable=True),
     sa.Column('expression', sa.String(), nullable=True),
     sa.Column('dimension_id', sa.Integer(), nullable=True),
-    sa.PrimaryKeyConstraint('fact_id')
     )
     op.create_table('visit_facts_hourly',
     sa.Column('campaign_id', sa.Integer(), nullable=False),
@@ -65,7 +61,6 @@ def upgrade():
     sa.Column('visits_shown_friend_sugg', sa.Integer(), nullable=True),
     sa.Column('authorized_visits', sa.Integer(), nullable=True),
     sa.Column('visits_with_shares', sa.Integer(), nullable=True),
-    sa.PrimaryKeyConstraint('campaign_id', 'hour', 'visit_id')
     )
     op.create_table('visits',
     sa.Column('visit_id', sa.Integer(), nullable=False),
@@ -78,7 +73,6 @@ def upgrade():
     sa.Column('source', sa.String(), nullable=True),
     sa.Column('updated', sa.DateTime(), nullable=True),
     sa.Column('created', sa.DateTime(), nullable=True),
-    sa.PrimaryKeyConstraint('visit_id')
     )
     op.create_table('fbid_facts_hourly',
     sa.Column('campaign_id', sa.Integer(), nullable=False),
@@ -89,7 +83,6 @@ def upgrade():
     sa.Column('fbids_shown_friends', sa.Integer(), nullable=True),
     sa.Column('fbids_face_pages', sa.Integer(), nullable=True),
     sa.Column('fbids_shared', sa.Integer(), nullable=True),
-    sa.PrimaryKeyConstraint('campaign_id', 'hour', 'fbid')
     )
     op.create_table('visitors',
     sa.Column('visitor_id', sa.Integer(), nullable=False),
@@ -97,7 +90,6 @@ def upgrade():
     sa.Column('fbid', sa.BigInteger(), nullable=True),
     sa.Column('updated', sa.DateTime(), nullable=True),
     sa.Column('created', sa.DateTime(), nullable=True),
-    sa.PrimaryKeyConstraint('visitor_id')
     )
     op.create_table('misc_facts_hourly',
     sa.Column('campaign_id', sa.Integer(), nullable=False),
@@ -108,7 +100,6 @@ def upgrade():
     sa.Column('authorizations', sa.Integer(), nullable=True),
     sa.Column('shares_failed', sa.Integer(), nullable=True),
     sa.Column('clickbacks', sa.Integer(), nullable=True),
-    sa.PrimaryKeyConstraint('campaign_id', 'hour')
     )
     op.create_table('dimension_metadata',
     sa.Column('dimension_id', sa.Integer(), nullable=False),
@@ -116,7 +107,6 @@ def upgrade():
     sa.Column('pretty_name', sa.String(), nullable=True),
     sa.Column('column', sa.String(), nullable=True),
     sa.Column('source_table', sa.String(), nullable=True),
-    sa.PrimaryKeyConstraint('dimension_id')
     )
     ### end Alembic commands ###
 
