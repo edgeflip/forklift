@@ -32,8 +32,9 @@ class HourlyFactLoader(object):
     def load_hour(self, hour, connection, logger):
         with staging_table(self.destination_table, connection) as staging_table_name:
             self.stage_hour(hour, staging_table_name, connection)
+            num_rows = connection.execute('select count(*) from {}'.format(staging_table_name))
             self.upsert(hour, staging_table_name, self.destination_table, connection)
-            logger.info('Completed load of hour {}'.format(hour))
+            logger.info('Completed load of {} rows for hour {}'.format(num_rows, hour))
 
 
     def stage_hour(self, hour, staging_table_name, connection):
