@@ -64,7 +64,7 @@ class HourlyFactLoader(object):
 
 
     def upsert(self, hour, staging_table_name, target_table_name, connection):
-        with connection.begin_nested():
+        with connection.begin():
             connection.execute("""
                 delete from {target_table}
                 where hour = '{hour}'

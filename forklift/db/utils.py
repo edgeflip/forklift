@@ -9,7 +9,7 @@ DOES_NOT_EXIST_MESSAGE_TEMPLATE = '"{0}" does not exist'
 # no 'drop table if exists', so just swallow the error
 def drop_table_if_exists(table, connection):
     try:
-        with connection.begin_nested():
+        with connection.begin():
             debug('Dropping table {}'.format(table))
             connection.execute("DROP TABLE {0}".format(table))
     except ProgrammingError as e:
@@ -44,7 +44,7 @@ def staging_table(destination_table_name, connection):
 def checkout_connection():
     connection = engine.connect()
     try:
-        with connection.begin_nested():
+        with connection.begin():
             yield connection
     finally:
         connection.close()
