@@ -26,7 +26,10 @@ class HourlyFactLoader(object):
 
 
     def where_expressions(self, hour):
-        return ["events.created between '{hour}' and timestamp '{hour}' + interval '1 hour'".format(hour=hour)]
+        return (
+            "events.created between '{hour}' and timestamp '{hour}' + interval '1 hour'".format(hour=hour),
+            "campaign_id is not null",
+        )
 
 
     def load_hour(self, hour, connection, logger):
@@ -58,7 +61,7 @@ class HourlyFactLoader(object):
             facts=",\n".join(fact.expression for fact in self.aggregate_table.facts),
             joins="\n".join(self.joins),
             staging_table=staging_table_name,
-            where_clause="and \n".join(self.where_expressions(formatted_hour)),
+            where_clause=" and \n".join(self.where_expressions(formatted_hour)),
             hour=formatted_hour,
         )
         connection.execute(dedent(sql))
@@ -95,7 +98,7 @@ class FriendFbidHourlyFactLoader(HourlyFactLoader):
     aggregate_table = FriendFbidFactsHourly
 
     def where_expressions(self, hour):
-        return super(FriendFbidHourlyFactLoader, self).where_expressions(hour) + ['friend_fbid is not null']
+        return super(FriendFbidHourlyFactLoader, self).where_expressions(hour) + ('friend_fbid is not null',)
 
 
 class IpHourlyFactLoader(HourlyFactLoader):
