@@ -51,6 +51,14 @@ class LoaderTestCase(ForkliftTestCase):
                 ],
                 'ip': '192.168.1.188',
             }],
+        }, {
+            'fbid': None,
+            'visits': [{
+                'events': [
+                    {'type': 'stuff'},
+                ],
+                'ip': '123.45.67.89',
+            }],
         }]
 
     @classmethod

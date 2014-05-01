@@ -29,7 +29,7 @@ class HourlyFactLoader(object):
         return (
             "events.created between '{hour}' and timestamp '{hour}' + interval '1 hour'".format(hour=hour),
             "campaign_id is not null",
-        )
+        ) + tuple("{}.{} is not null".format(dim.source_table, dim.column_name) for dim in self.aggregate_table.extra_dimensions)
 
 
     def load_hour(self, hour, connection, logger):
@@ -96,9 +96,6 @@ class FbidHourlyFactLoader(HourlyFactLoader):
 
 class FriendFbidHourlyFactLoader(HourlyFactLoader):
     aggregate_table = FriendFbidFactsHourly
-
-    def where_expressions(self, hour):
-        return super(FriendFbidHourlyFactLoader, self).where_expressions(hour) + ('friend_fbid is not null',)
 
 
 class IpHourlyFactLoader(HourlyFactLoader):
