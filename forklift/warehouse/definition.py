@@ -129,6 +129,11 @@ class VisitFactsHourly(HourlyAggregateTable):
             pretty_name='Visits with shares',
             expression="count(distinct case when events.type='shared' then events.visit_id else null end)",
         ),
+        Fact(
+            slug='visits_with_share_clicks',
+            pretty_name='Visits with share click',
+            expression="count(distinct case when events.type='share_click' then events.visit_id else null end)",
+        ),
     )
 
     extra_dimensions = (
