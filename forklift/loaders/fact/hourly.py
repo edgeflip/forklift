@@ -1,5 +1,6 @@
 from abc import abstractproperty, ABCMeta
 from textwrap import dedent
+import time
 
 from forklift.db.utils import staging_table
 from forklift.warehouse.definition import FbidFactsHourly, FriendFbidFactsHourly, IpFactsHourly, MiscFactsHourly, VisitFactsHourly
@@ -33,11 +34,17 @@ class HourlyFactLoader(object):
 
 
     def load_hour(self, hour, connection, logger):
+        start_time = time.time()
         with staging_table(self.destination_table, connection) as staging_table_name:
             self.stage_hour(hour, staging_table_name, connection)
             num_rows = connection.execute('select count(*) as num_rows from {}'.format(staging_table_name)).fetchone()[0]
             self.upsert(hour, staging_table_name, self.destination_table, connection)
-            logger.info('Completed load of {} rows for hour {}'.format(int(num_rows), hour))
+            end_time = time.time()
+            logger.info('Completed load of {} rows for hour {} in {:.2f}s'.format(
+                int(num_rows),
+                hour.strftime("%Y-%m-%d %H"),
+                end_time - start_time
+            ))
 
 
     def stage_hour(self, hour, staging_table_name, connection):
