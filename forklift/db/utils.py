@@ -1,4 +1,4 @@
-from logging import debug, info
+from logging import debug
 from sqlalchemy.exc import ProgrammingError
 from contextlib import contextmanager
 from forklift.db.base import engine
@@ -14,7 +14,7 @@ def drop_table_if_exists(table, connection):
             connection.execute("DROP TABLE {0}".format(table))
     except ProgrammingError as e:
         if DOES_NOT_EXIST_MESSAGE_TEMPLATE.format(table) in str(e):
-            info("Table {0} did not exist, so no dropping was performed.".format(table))
+            debug("Table {0} did not exist, so no dropping was performed.".format(table))
         else:
             raise
 
