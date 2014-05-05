@@ -3,6 +3,7 @@ import pymlconf
 from kombu import Queue
 import logging
 import logging.config
+from celery.signals import setup_logging
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 GLOBAL_CONFIG_DIR = '/etc/forklift'
@@ -58,9 +59,10 @@ LOGGING = {
             'formatter': 'console',
         },
         'syslog': {
-            'level': 'DEBUG',
+            'level': 'INFO',
             'class': 'logging.handlers.SysLogHandler',
             'formatter': 'console',
+            'address': '/dev/log',
         },
     },
     'root': {
@@ -83,6 +85,10 @@ if os.environ['ENV'] in ('staging', 'production'):
     }
     LOGGING['loggers']['grackle'].setdefault('handlers', []).append('sentry')
 logging.config.dictConfig(LOGGING)
+
+@setup_logging.connect
+def configure_logging(sender=None, **kwargs):
+    logging.config.dictConfig(LOGGING)
 
 IP_SLUG = 'ip'
 FBID_SLUG = 'fbid'
