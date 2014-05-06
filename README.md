@@ -53,13 +53,13 @@ This is the same as 'edgeflip' as well, so skip this if you've done this for tha
 Using
 ---
 #### Run the celery workers from your virtualenv
-    $ `ENV=development fab serve.celery`
+    $ ENV=development fab serve.celery
 
 #### To make them do something, queue up some jorbs:
-    $ `ENV=development python forklift/scripts/queue_hourly_fact_loaders.py`
-This script queues up processing jobs for all of the existing queues. The default is the current and previous hours, but you can give temporal arguments too:
-    $ `ENV=development python forklift/scripts/queue_hourly_fact_loaders.py --days-back=25`
-    $ `ENV=development python forklift/scripts/queue_hourly_fact_loaders.py --start-date=2014-02-01 --end-date=2014-02-28`
+    $ ENV=development python forklift/scripts/queue_hourly_fact_loaders.py
+    This script queues up processing jobs for all of the existing queues. The default is the current and previous hours, but you can give temporal arguments too
+    $ ENV=development python forklift/scripts/queue_hourly_fact_loaders.py --days-back=25
+    $ ENV=development python forklift/scripts/queue_hourly_fact_loaders.py --start-date=2014-02-01 --end-date=2014-02-28
 
 #### Adding facts or other stuff
 1. Update the [warehouse definition](forklift/warehouse/definition.py)
