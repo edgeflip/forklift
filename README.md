@@ -84,12 +84,14 @@ Updating Production
 ### Activities which may go in step 5:
 
 #### Updating libs (this may never happen):
-5a. `deactivate`
-5b. `ENV=production fab -R production build`
-5c. `workon forklift`
+```
+deactivate
+ENV=production fab -R production build
+workon forklift
+```
 
 #### Updating credentials:
-5d. `sudo s3cmd get --recursive --force -c /root/.s3cfg-creds s3://ef-techops/creds/apps/production/edgeflip-forklift/ /etc/forklift/conf.d/`
+    $ sudo s3cmd get --recursive --force -c /root/.s3cfg-creds s3://ef-techops/creds/apps/production/edgeflip-forklift/ /etc/forklift/conf.d/
 
 #### Running migrations:
-5e. `ENV=production alembic upgrade head`
+    $ ENV=production alembic upgrade head`
