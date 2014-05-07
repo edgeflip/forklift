@@ -15,6 +15,8 @@ campaign id | hour | fact1 | fact2
 
 The campaign id and hours are our dimensions, and the rest of the columns are facts. Since we rely heavily on distinct events by some dimension (visit id, ip address, etc), most fact tables have an additional dimension to ensure we can still roll up different time periods and not double-count rows. These tables end up being pretty big, as you can expect, but still function as a way to let us collapse 25 or so events down to one easily-queryable row.
 
+The processing jobs are managed in celery; a processing job consists of an hour in time to be processed. On production, the prior two hours are queued up for processing every five minutes. This means that we need to manually reprocess data if we wish to retroactively apply fact changes.
+
 
 Installation
 ---
