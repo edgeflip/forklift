@@ -84,6 +84,11 @@ class FriendFbidFactsHourly(HourlyAggregateTable):
     slug = FRIEND_SLUG
     facts = (
         Fact(
+            slug='distinct_faces_shown',
+            pretty_name='Distinct Faces Shown',
+            expression="count(distinct case when events.type='shown' then events.friend_fbid else null end)",
+        ),
+        Fact(
             slug='friends_shared_with',
             pretty_name='Unique Friends shared with',
             expression="count(distinct case when events.type='shared' then events.friend_fbid else null end)",
@@ -106,13 +111,23 @@ class VisitFactsHourly(HourlyAggregateTable):
     facts = (
         Fact(
             slug='visit_ids',
-            pretty_name='Visit Ids',
-            expression="count(distinct case when events.type='heartbeat' then events.visit_id else null end)",
+            pretty_name='Visits',
+            expression="count(distinct case when events.type='incoming_redirect' then events.visit_id else null end)",
         ),
         Fact(
             slug='visits_declined_auth',
             pretty_name='Declined Authorizations',
             expression="count(distinct case when (events.type='auth_fail' or events.type='oauth_declined') then events.visit_id else 0 end)",
+        ),
+        Fact(
+            slug='visits_generated_faces',
+            pretty_name='Visits Generated Faces',
+            expression="count(distinct case when events.type='generated' then events.visit_id else null end)",
+        ),
+        Fact(
+            slug='visits_facepage_rendered',
+            pretty_name='Visits with Faces Page Rendered',
+            expression="count(distinct case when events.type='faces_page_rendered' then events.visit_id else null end)",
         ),
         Fact(
             slug='visits_shown_friend_sugg',
@@ -152,8 +167,13 @@ class MiscFactsHourly(HourlyAggregateTable):
     facts = (
         Fact(
             slug='visitors',
-            pretty_name='Visitors',
-            expression="sum(case when events.type='heartbeat' then 1 else 0 end)",
+            pretty_name='Incoming Redirects',
+            expression="sum(case when events.type='incoming_redirect' then 1 else 0 end)",
+        ),
+        Fact(
+            slug='clicks',
+            pretty_name='Clicks',
+            expression="sum(case when events.type='button_click' then 1 else 0 end)",
         ),
         Fact(
             slug='no_friends',
@@ -169,6 +189,16 @@ class MiscFactsHourly(HourlyAggregateTable):
             slug='authorizations',
             pretty_name='Authorizations',
             expression="sum(case when events.type='authorized' then 1 else 0 end)",
+        ),
+        Fact(
+            slug='total_faces_shown',
+            pretty_name='Total Faces Shown',
+            expression="sum(case when events.type='shown' then 1 else 0 end)",
+        ),
+        Fact(
+            slug='total_shares',
+            pretty_name='Total Shares',
+            expression="sum(case when events.type='shared' then 1 else 0 end)",
         ),
         Fact(
             slug='shares_failed',
@@ -199,7 +229,7 @@ class IpFactsHourly(HourlyAggregateTable):
         Fact(
             slug='ip_visitors',
             pretty_name='IP Visitors',
-            expression="count(distinct case when events.type='heartbeat' then ip else null end)",
+            expression="count(distinct case when events.type='incoming_redirect' then ip else null end)",
         ),
         Fact(
             slug='ips_declined_auth',
