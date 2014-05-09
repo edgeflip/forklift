@@ -2,6 +2,7 @@ from logging import debug
 from sqlalchemy.exc import ProgrammingError
 from contextlib import contextmanager
 from forklift.db.base import engine
+from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
 
 
 DOES_NOT_EXIST_MESSAGE_TEMPLATE = '"{0}" does not exist'
@@ -48,3 +49,19 @@ def checkout_connection():
             yield connection
     finally:
         connection.close()
+
+
+def load_from_s3(connection, bucket_name, key_name, table_name, delim="\t"):
+    connection.execute("""
+        COPY {table} FROM 's3://{bucket}/{key}'
+        CREDENTIALS 'aws_access_key_id={access};aws_secret_access_key={secret}'
+        DELIMITER '{delim}'
+    """.format(
+            delim=delim,
+            table=table_name,
+            bucket=bucket_name,
+            key=key_name,
+            access=AWS_ACCESS_KEY,
+            secret=AWS_SECRET_KEY,
+        )
+    )
