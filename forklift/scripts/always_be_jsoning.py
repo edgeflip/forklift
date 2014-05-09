@@ -13,12 +13,10 @@ from itertools import imap, repeat
 import os.path
 import time
 import datetime
-from forklift.settings import S3_OUT_BUCKET_NAME
+from forklift.settings import S3_OUT_BUCKET_NAME, AWS_ACCESS_KEY, AWS_SECRET_KEY
 from forklift.tasks import post_upload, post_user_upload
 
 
-AWS_ACCESS_KEY = "AKIAJDPO2KQRLOJBQP3Q"
-AWS_SECRET_KEY = "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"
 S3_IN_BUCKET_NAMES = [ "user_feeds_%d" % i for i in range(5) ]
 DB_TEXT_LEN = 4096
 
