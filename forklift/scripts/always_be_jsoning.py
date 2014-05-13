@@ -14,10 +14,11 @@ import os.path
 import time
 import datetime
 from forklift.settings import S3_OUT_BUCKET_NAME, AWS_ACCESS_KEY, AWS_SECRET_KEY
-from forklift.tasks import post_upload, post_user_upload
+from forklift.tasks import post_upload, post_user_upload, move_s3_file
 
 
 S3_IN_BUCKET_NAMES = [ "user_feeds_%d" % i for i in range(5) ]
+S3_DONE_DIR = "loaded"
 DB_TEXT_LEN = 4096
 
 
@@ -145,10 +146,10 @@ class FeedPostFromJson(object):
         self.post_link_domain = urlparse(self.post_link).hostname if (self.post_link) else ""
 
         #todo: fix this terrible, terrible thing that limits the length of strings
-        self.post_story = post_json.get('story', "")[:DB_TEXT_LEN / 2]
-        self.post_description = post_json.get('description', "")[:DB_TEXT_LEN / 2]
-        self.post_caption = post_json.get('caption', "")[:DB_TEXT_LEN / 2]
-        self.post_message = post_json.get('message', "")[:DB_TEXT_LEN / 2]
+        self.post_story = post_json.get('story', "")
+        self.post_description = post_json.get('description', "")
+        self.post_caption = post_json.get('caption', "")
+        self.post_message = post_json.get('message', "")
 
         self.to_ids = set()
         self.like_ids = set()
@@ -192,8 +193,8 @@ def handle_feed_s3(args):
     key_name_links = str(sec_id) + "_links.tsv"
     post_count, link_count = feed.write_s3(conn_s3_global, S3_OUT_BUCKET_NAME, key_name_posts, key_name_links)
 
-    post_upload.apply_async(args=(key_name_posts,))
-    post_user_upload.apply_async(args=(key_name_links,))
+    (post_upload.si((key_name_posts,) | move_s3_file.s(S3_OUT_BUCKET_NAME, key_name_posts, S3_DONE_DIR)).apply_async()
+    (post_user_upload.si((key_name_links,) | move_s3_file.s(S3_OUT_BUCKET_NAME, key_name_links, S3_DONE_DIR)).apply_async()
 
     return (post_count, link_count)
 
@@ -260,7 +261,7 @@ def profile_process_feeds(out_dir, max_worker_count, max_feeds, overwrite,
     for worker_count in worker_counts:
         tim = Timer()
         for t in range(profile_trials):
-            process_feeds(out_dir, worker_count, max_feeds, overwrite)
+            process_feeds(worker_count, max_feeds, overwrite, load_thresh, bucket_name)
             elapsed = tim.end()
         logger.info(tim.report_splits_avg("%d workers " % worker_count) + "\n\n")
 
@@ -299,8 +300,9 @@ if __name__ == '__main__':
         process_feeds(args.workers, args.maxfeeds, args.overwrite, args.loadthresh)
 
     else:
-        profile_process_feeds(args.out_dir, args.workers, args.maxfeeds, args.overwrite,
-                              args.prof_trials, args.prof_incr)
+        profile_process_feeds(args.workers, args.maxfeeds, args.overwrite,
+                            args.loadthresh, args.bucket,
+                            args.prof_trials, args.prof_incr)
 
 
 #zzz todo: do something more intelligent with \n and \t in text

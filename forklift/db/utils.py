@@ -51,11 +51,11 @@ def checkout_connection():
         connection.close()
 
 
-def load_from_s3(connection, bucket_name, key_name, table_name, delim="\t"):
+def load_from_s3(connection, bucket_name, key_name, table_name, dest_bucket, delim="\t"):
     connection.execute("""
         COPY {table} FROM 's3://{bucket}/{key}'
         CREDENTIALS 'aws_access_key_id={access};aws_secret_access_key={secret}'
-        DELIMITER '{delim}'
+        DELIMITER '{delim}' TRUNCATECOLUMNS ACCEPTINVCHARS NULL AS '\000'
     """.format(
             delim=delim,
             table=table_name,

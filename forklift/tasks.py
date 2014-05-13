@@ -1,8 +1,9 @@
 import celery
 
 import forklift.loaders.fact.hourly as loaders
-from forklift.db.utils import checkout_connection
-from forklift.settings import S3_OUT_BUCKET_NAME 
+from forklift.db.utils import checkout_connection, load_from_s3
+from forklift.s3.utils import move_file
+from forklift.settings import S3_OUT_BUCKET_NAME
 import logging
 
 app = celery.Celery('forklift')
@@ -49,3 +50,8 @@ def post_import(filename):
 def post_user_import(filename):
     with checkout_connection() as connection:
         load_from_s3(connection, S3_OUT_BUCKET_NAME, filename, 'user_posts'):
+
+
+@app.task
+def move_s3_file(bucket_name, key_name, new_directory):
+    move_file(bucket_name, key_name, new_directory)
