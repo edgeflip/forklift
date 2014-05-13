@@ -62,7 +62,6 @@ def checkout_connection():
         connection.close()
 
 
-<<<<<<< HEAD
 # promote a staging table with up-to-date data into production by renaming it
 # however, we move the existing one out of the way first in case something goes wrong
 def deploy_table(table, staging_table, old_table, connection):
