@@ -13,13 +13,19 @@ from itertools import imap, repeat
 import os.path
 import time
 import datetime
+import uuid
+import itertools
+
+sys.path.append(os.path.abspath(os.curdir))
 from forklift.settings import S3_OUT_BUCKET_NAME, AWS_ACCESS_KEY, AWS_SECRET_KEY
-from forklift.tasks import post_upload, post_user_upload, move_s3_file
+#from forklift.tasks import post_upload, post_user_upload, move_s3_file
 
 
 S3_IN_BUCKET_NAMES = [ "user_feeds_%d" % i for i in range(5) ]
 S3_DONE_DIR = "loaded"
 DB_TEXT_LEN = 4096
+FEEDS_PER_FILE = 100    # optimal filesize is between 1MB and 1GB
+                        # this is a rough guesstimate that should get us there
 
 
 logger = logging.getLogger(__name__)
@@ -36,8 +42,19 @@ def s3_key_iter(bucket_names=S3_IN_BUCKET_NAMES):
     conn_s3 = get_conn_s3()
     for b, bucket_name in enumerate(bucket_names):
         logger.debug("reading bucket %d/%d (%s)" % (b, len(bucket_names), bucket_name))
-        for key in conn_s3.get_bucket(bucket_name).list():
-            yield key
+        feeds = conn_s3.get_bucket(bucket_name).list()
+        feeds_in_batch = 0
+        feed_batch = []
+        for feed in feeds:
+            if feeds_in_batch < FEEDS_PER_FILE:
+                feed_batch.append(feed)
+                feeds_in_batch += 1
+            else:
+                feeds_in_batch = 0
+                yield feed_batch
+                feed_batch = []
+        if feeds_in_batch > 0:
+            yield feed_batch
     conn_s3.close()
 
 def delete_s3_bucket(conn_s3, bucket_name):
@@ -45,6 +62,7 @@ def delete_s3_bucket(conn_s3, bucket_name):
     for key in buck.list():
         key.delete()
     conn_s3.delete_bucket(bucket_name)
+
 
 def create_s3_bucket(conn_s3, bucket_name, overwrite=False):
     if conn_s3.lookup(bucket_name) is not None:
@@ -64,7 +82,9 @@ def create_s3_bucket(conn_s3, bucket_name, overwrite=False):
 class FeedFromS3(object):
     """Holds an entire feed from a single user crawl"""
 
-    def __init__(self, fbid, key):
+    def __init__(self, key):
+        prim_id, fbid = key.name.split("_")
+
         with tempfile.TemporaryFile() as fp:
             key.get_contents_to_file(fp)
             fp.seek(0)
@@ -108,20 +128,41 @@ class FeedFromS3(object):
                 link_lines.append(delim.join(f.encode('utf8', 'ignore') for f in link_fields))
         return link_lines
 
-    def write_s3(self, conn_s3, bucket_name, key_name_posts, key_name_links, delim="\t"):
-        buck = conn_s3.get_bucket(bucket_name)
 
-        post_lines = self.get_post_lines()
-        key_posts = Key(buck)
-        key_posts.key = key_name_posts
+class FeedChunk(object):
+    feeds = None
+
+    def __init__(self, keys):
+        self.feeds = []
+        for key in keys:
+            try:
+                self.feeds.append(FeedFromS3(key))
+            except KeyError:
+                pass
+
+
+    def write_posts(self, bucket, key_name, delim):
+        post_lines = list(itertools.chain.from_iterable(feed.get_post_lines() for feed in self.feeds))
+        key_posts = Key(bucket)
+        key_posts.key = key_name
         key_posts.set_contents_from_string("\n".join(post_lines))
+        return len(post_lines)
 
-        link_lines = self.get_link_lines()
-        key_links = Key(buck)
-        key_links.key = key_name_links
+
+    def write_links(self, bucket, key_name, delim):
+        link_lines = list(itertools.chain.from_iterable(feed.get_link_lines() for feed in self.feeds))
+        key_links = Key(bucket)
+        key_links.key = key_name
         key_links.set_contents_from_string("\n".join(link_lines))
+        return len(link_lines)
 
-        return len(post_lines), len(link_lines)
+
+    def write_s3(self, conn_s3, bucket_name, key_name_posts, key_name_links, delim="\t"):
+        bucket = conn_s3.get_bucket(bucket_name)
+        len_post_lines = self.write_posts(bucket, key_name_posts, delim)
+        len_link_lines = self.write_links(bucket, key_name_links, delim)
+
+        return len_post_lines, len_link_lines
 
 
 # Despite what the docs say, datetime.strptime() format doesn't like %z
@@ -172,29 +213,21 @@ def set_global_conns():
 
 
 def handle_feed_s3(args):
-    key, load_thresh = args  #zzz todo: there's got to be a better way to handle this
+    keys, load_thresh = args  #zzz todo: there's got to be a better way to handle this
 
     pid = os.getpid()
-    logger.debug("pid " + str(pid) + ", key " + key.name + ", have conn: " + str(conn_rs_global))
+    logger.debug("pid " + str(pid) + ", " + " have conn")
 
     # name should have format primary_secondary; e.g., "100000008531200_1000760833"
-    prim_id, sec_id = key.name.split("_")
-    logger.debug("pid " + str(pid) + " have prim, sec: " + prim_id + ", " + sec_id)
+    feed_chunk = FeedChunk(keys)
 
-    try:
-        logger.debug("pid " + str(pid) + " creating feed")
-        feed = FeedFromS3(sec_id, key)
-        logger.debug("pid " + str(pid) + " got feed")
-    except KeyError:  # gets logged and reraised upstream
-        logger.debug("pid " + str(pid) + " KeyError exception!")
-        return None
+    logger.debug("done with the chunk")
+    key_name_posts = "posts/" + str(uuid.uuid4())
+    key_name_links = "links/" + str(uuid.uuid4())
+    post_count, link_count = feed_chunk.write_s3(conn_s3_global, S3_OUT_BUCKET_NAME, key_name_posts, key_name_links)
 
-    key_name_posts = str(sec_id) + "_posts.tsv"
-    key_name_links = str(sec_id) + "_links.tsv"
-    post_count, link_count = feed.write_s3(conn_s3_global, S3_OUT_BUCKET_NAME, key_name_posts, key_name_links)
-
-    (post_upload.si((key_name_posts,) | move_s3_file.s(S3_OUT_BUCKET_NAME, key_name_posts, S3_DONE_DIR)).apply_async()
-    (post_user_upload.si((key_name_links,) | move_s3_file.s(S3_OUT_BUCKET_NAME, key_name_links, S3_DONE_DIR)).apply_async()
+    #(post_upload.si((key_name_posts,) | move_s3_file.s(S3_OUT_BUCKET_NAME, key_name_posts, S3_DONE_DIR)).apply_async()
+    #(post_user_upload.si((key_name_links,) | move_s3_file.s(S3_OUT_BUCKET_NAME, key_name_links, S3_DONE_DIR)).apply_async()
 
     return (post_count, link_count)
 
@@ -202,7 +235,7 @@ def handle_feed_s3(args):
 def process_feeds(worker_count, max_feeds, overwrite, load_thresh):
 
     conn_s3 = get_conn_s3()
-    create_s3_bucket(conn_s3, S3_OUT_BUCKET_NAME, overwrite)
+    #create_s3_bucket(conn_s3, S3_OUT_BUCKET_NAME, overwrite)
     conn_s3.close()
 
     logger.info("process %d farming out to %d childs" % (os.getpid(), worker_count))
