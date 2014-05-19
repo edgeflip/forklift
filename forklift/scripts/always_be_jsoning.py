@@ -184,9 +184,11 @@ class FeedPostFromJson(object):
 
         self.post_from = post_json['from']['id'] if 'from' in post_json else ""
         self.post_link = post_json.get('link', "")
-        self.post_link_domain = urlparse(self.post_link).hostname if (self.post_link) else ""
+        try:
+            self.post_link_domain = urlparse(self.post_link).hostname if (self.post_link) else ""
+        except ValueError: # handling invalid Ipv6 address errors
+            self.post_link_domain = ""
 
-        #todo: fix this terrible, terrible thing that limits the length of strings
         self.post_story = post_json.get('story', "")
         self.post_description = post_json.get('description', "")
         self.post_caption = post_json.get('caption', "")
