@@ -213,7 +213,7 @@ def set_global_conns():
 
 
 def handle_feed_s3(args):
-    keys, load_thresh = args  #zzz todo: there's got to be a better way to handle this
+    keys = args[0]  #zzz todo: there's got to be a better way to handle this
 
     pid = os.getpid()
     logger.debug("pid " + str(pid) + ", " + " have conn")
@@ -232,7 +232,7 @@ def handle_feed_s3(args):
     return (post_count, link_count)
 
 
-def process_feeds(worker_count, max_feeds, overwrite, load_thresh):
+def process_feeds(worker_count, overwrite):
 
     conn_s3 = get_conn_s3()
     #create_s3_bucket(conn_s3, S3_OUT_BUCKET_NAME, overwrite)
@@ -241,7 +241,7 @@ def process_feeds(worker_count, max_feeds, overwrite, load_thresh):
     logger.info("process %d farming out to %d childs" % (os.getpid(), worker_count))
     pool = multiprocessing.Pool(processes=worker_count, initializer=set_global_conns)
 
-    feed_arg_iter = imap(None, s3_key_iter(), repeat(load_thresh))
+    feed_arg_iter = imap(None, s3_key_iter())
     post_line_count_tot = 0
     link_line_count_tot = 0
 
@@ -258,47 +258,11 @@ def process_feeds(worker_count, max_feeds, overwrite, load_thresh):
             post_line_count_tot += post_lines
             link_line_count_tot += link_lines
 
-        if (max_feeds is not None) and (i >= max_feeds):
-            #sys.exit("bailing")
-            break
-
-
     #zzz todo: deal with unloaded partial batches of feeds still stuck in S3
 
 
     pool.terminate()
     return i
-
-class Timer(object):
-    def __init__(self):
-        self.start = time.time()
-        self.ends = []
-    def end(self):
-        self.ends.append(time.time())
-        return self.ends[-1] - ([self.start] + self.ends)[-2]
-    def get_splits(self):
-        splits = []
-        s = self.start
-        for e in self.ends:
-            splits.append(e - s)
-            s = e
-        return splits
-    def report_splits_avg(self, prefix=""):
-        splits = self.get_splits()
-        return prefix + "avg time over %d trials: %.1f secs" % (len(self.ends), sum(splits)/len(splits))
-
-def profile_process_feeds(out_dir, max_worker_count, max_feeds, overwrite,
-                          profile_trials, profile_incr):
-    worker_counts = range(max_worker_count, 1, -1*profile_incr) + [1]
-    logger.info("worker counts: %s" % str(worker_counts))
-    for worker_count in worker_counts:
-        tim = Timer()
-        for t in range(profile_trials):
-            process_feeds(worker_count, max_feeds, overwrite, load_thresh, bucket_name)
-            elapsed = tim.end()
-        logger.info(tim.report_splits_avg("%d workers " % worker_count) + "\n\n")
-
-
 
 
 
@@ -309,12 +273,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Eat up the FB sync data and put it into a tsv')
     # parser.add_argument('out_dir', type=str, help='base dir for output files')
     parser.add_argument('--workers', type=int, help='number of workers to multiprocess', default=1)
-    parser.add_argument('--maxfeeds', type=int, help='bail after x feeds are done', default=None)
     parser.add_argument('--overwrite', action='store_true', help='overwrite previous runs')
     parser.add_argument('--logfile', type=str, help='for debugging', default=None)
-    parser.add_argument('--prof_trials', type=int, help='run x times with incr workers', default=1)
-    parser.add_argument('--prof_incr', type=int, help='profile worker decrement', default=5)
-    parser.add_argument('--loadthresh', type=int, help='number of feeds to write to file before loading to db', default=50)
     args = parser.parse_args()
 
     hand_s = logging.StreamHandler()
@@ -329,13 +289,7 @@ if __name__ == '__main__':
         logger.addHandler(hand_f)
     logger.addHandler(hand_s)
 
-    if args.prof_trials == 1:
-        process_feeds(args.workers, args.maxfeeds, args.overwrite, args.loadthresh)
-
-    else:
-        profile_process_feeds(args.workers, args.maxfeeds, args.overwrite,
-                            args.loadthresh, args.bucket,
-                            args.prof_trials, args.prof_incr)
+    process_feeds(args.workers, args.overwrite)
 
 
 #zzz todo: do something more intelligent with \n and \t in text
