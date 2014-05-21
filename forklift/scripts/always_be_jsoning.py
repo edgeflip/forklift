@@ -15,6 +15,7 @@ import time
 import datetime
 import uuid
 import itertools
+import httplib
 
 sys.path.append(os.path.abspath(os.curdir))
 from forklift.settings import S3_OUT_BUCKET_NAME, AWS_ACCESS_KEY, AWS_SECRET_KEY
@@ -102,7 +103,7 @@ class FeedFromS3(object):
         for post_json in feed_json_list:
             try:
                 self.posts.append(FeedPostFromJson(post_json))
-            except Exception:
+            except StandardError:
                 logger.debug("error parsing: " + str(post_json))
                 # logger.debug("full feed: " + str(feed_json_list))
                 raise
@@ -110,10 +111,10 @@ class FeedFromS3(object):
     def get_post_lines(self, delim="\t"):
         post_lines = []
         for p in self.posts:
-            post_fields = [self.user_id, p.post_id, p.post_ts, p.post_type, p.post_app, p.post_from,
+            post_fields = (self.user_id, p.post_id, p.post_ts, p.post_type, p.post_app, p.post_from,
                            p.post_link, p.post_link_domain,
-                           p.post_story, p.post_description, p.post_caption, p.post_message]
-            line = delim.join(f.replace(delim, " ").replace("\n", " ").encode('utf8', 'ignore') for f in post_fields)
+                           p.post_story, p.post_description, p.post_caption, p.post_message)
+            line = delim.join(f.replace(delim, " ").replace("\n", " ").replace("\x00", "").encode('utf8', 'ignore') for f in post_fields)
             post_lines.append(line)
         return post_lines
 
@@ -124,7 +125,7 @@ class FeedFromS3(object):
                 has_to = "1" if user_id in p.to_ids else ""
                 has_like = "1" if user_id in p.like_ids else ""
                 has_comm = "1" if user_id in p.comment_ids else ""
-                link_fields = [p.post_id, user_id, has_to, has_like, has_comm]
+                link_fields = (p.post_id, user_id, has_to, has_like, has_comm)
                 link_lines.append(delim.join(f.encode('utf8', 'ignore') for f in link_fields))
         return link_lines
 
@@ -135,10 +136,14 @@ class FeedChunk(object):
     def __init__(self, keys):
         self.feeds = []
         for key in keys:
-            try:
-                self.feeds.append(FeedFromS3(key))
-            except KeyError:
-                pass
+            for attempt in range(3):
+                try:
+                    self.feeds.append(FeedFromS3(key))
+                    break
+                except httplib.IncompleteRead:
+                    pass
+                except KeyError:
+                    break
 
 
     def write_posts(self, bucket, key_name, delim):
@@ -146,6 +151,7 @@ class FeedChunk(object):
         key_posts = Key(bucket)
         key_posts.key = key_name
         key_posts.set_contents_from_string("\n".join(post_lines))
+        key_posts.close()
         return len(post_lines)
 
 
@@ -154,6 +160,7 @@ class FeedChunk(object):
         key_links = Key(bucket)
         key_links.key = key_name
         key_links.set_contents_from_string("\n".join(link_lines))
+        key_links.close()
         return len(link_lines)
 
 
@@ -236,9 +243,9 @@ def handle_feed_s3(args):
 
 def process_feeds(worker_count, overwrite):
 
-    conn_s3 = get_conn_s3()
+    #conn_s3 = get_conn_s3()
     #create_s3_bucket(conn_s3, S3_OUT_BUCKET_NAME, overwrite)
-    conn_s3.close()
+    #conn_s3.close()
 
     logger.info("process %d farming out to %d childs" % (os.getpid(), worker_count))
     pool = multiprocessing.Pool(processes=worker_count, initializer=set_global_conns)
@@ -249,7 +256,6 @@ def process_feeds(worker_count, overwrite):
 
     time_start = time.time()
     for i, counts_tup in enumerate(pool.imap_unordered(handle_feed_s3, feed_arg_iter)):
-
         if i % 1000 == 0:
             time_delt = datetime.timedelta(seconds=int(time.time()-time_start))
             logger.info("\t%s %d feeds, %d posts, %d links" % (str(time_delt), i, post_line_count_tot, link_line_count_tot))
