@@ -16,6 +16,7 @@ import datetime
 import uuid
 import itertools
 import httplib
+import socket
 
 sys.path.append(os.path.abspath(os.curdir))
 from forklift.settings import S3_OUT_BUCKET_NAME, AWS_ACCESS_KEY, AWS_SECRET_KEY
@@ -155,7 +156,7 @@ class FeedChunk(object):
                     self.post_lines.extend(feed.get_post_lines())
                     self.link_lines.extend(feed.get_link_lines())
                     break
-                except httplib.IncompleteRead:
+                except (httplib.IncompleteRead, socket.error):
                     pass
                 except KeyError:
                     break
