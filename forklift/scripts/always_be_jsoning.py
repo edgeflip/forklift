@@ -94,10 +94,10 @@ class FeedFromS3(object):
         try:
             feed_json_list = feed_json['data']
         except KeyError:
-            logger.debug("no data in feed %s" % key.name)
-            logger.debug(str(feed_json))
+            #logger.debug("no data in feed %s" % key.name)
+            #logger.debug(str(feed_json))
             raise
-        logger.debug("\tread feed json with %d posts from %s" % (len(feed_json_list), key.name))
+        #logger.debug("\tread feed json with %d posts from %s" % (len(feed_json_list), key.name))
 
         self.user_id = fbid
         self.posts = []
@@ -245,12 +245,12 @@ def handle_feed_s3(args):
     keys = args[0]  #zzz todo: there's got to be a better way to handle this
 
     pid = os.getpid()
-    logger.debug("pid " + str(pid) + ", " + " have conn")
+    #logger.debug("pid " + str(pid) + ", " + " have conn")
 
     # name should have format primary_secondary; e.g., "100000008531200_1000760833"
     feed_chunk = FeedChunk(keys)
 
-    logger.debug("done with the chunk")
+    #logger.debug("done with the chunk")
     key_name_posts = "posts/" + str(uuid.uuid4())
     key_name_links = "links/" + str(uuid.uuid4())
     post_count, link_count = feed_chunk.write_s3(conn_s3_global, S3_OUT_BUCKET_NAME, key_name_posts, key_name_links)
