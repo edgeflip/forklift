@@ -165,7 +165,7 @@ class FeedChunk(object):
     def write_posts(self, bucket, key_name, delim):
         key_posts = Key(bucket)
         key_posts.key = key_name
-        key_posts.set_contents_from_string("\n".join(self.post_lines))
+        key_posts.set_contents_from_string("\n".join(self.post_lines) + "\n")
         key_posts.close()
         return len(self.post_lines)
 
@@ -173,7 +173,7 @@ class FeedChunk(object):
     def write_links(self, bucket, key_name, delim):
         key_links = Key(bucket)
         key_links.key = key_name
-        key_links.set_contents_from_string("\n".join(self.link_lines))
+        key_links.set_contents_from_string("\n".join(self.link_lines) + "\n")
         key_links.close()
         return len(self.link_lines)
 
