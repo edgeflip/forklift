@@ -147,14 +147,20 @@ class FeedFromS3(object):
 
 class FeedChunk(object):
     def __init__(self, keys):
-        self.post_lines = []
-        self.link_lines = []
+        self.num_posts = 0
+        self.num_links = 0
+        self.post_string = ""
+        self.link_string = ""
         for key in keys:
             for attempt in range(3):
                 try:
                     feed = FeedFromS3(key)
-                    self.post_lines.extend(feed.get_post_lines())
-                    self.link_lines.extend(feed.get_link_lines())
+                    post_lines = feed.get_post_lines()
+                    link_lines = feed.get_link_lines()
+                    self.post_string += "\n".join(post_lines) + "\n"
+                    self.link_string += "\n".join(link_lines) + "\n"
+                    self.num_posts += len(post_lines)
+                    self.num_links += len(link_lines)
                     break
                 except (httplib.IncompleteRead, socket.error):
                     pass
@@ -165,17 +171,17 @@ class FeedChunk(object):
     def write_posts(self, bucket, key_name, delim):
         key_posts = Key(bucket)
         key_posts.key = key_name
-        key_posts.set_contents_from_string("\n".join(self.post_lines) + "\n")
+        key_posts.set_contents_from_string(self.post_string + "\n")
         key_posts.close()
-        return len(self.post_lines)
+        return self.num_posts
 
 
     def write_links(self, bucket, key_name, delim):
         key_links = Key(bucket)
         key_links.key = key_name
-        key_links.set_contents_from_string("\n".join(self.link_lines) + "\n")
+        key_links.set_contents_from_string(self.link_string + "\n")
         key_links.close()
-        return len(self.link_lines)
+        return self.num_links
 
 
     def write_s3(self, conn_s3, bucket_name, key_name_posts, key_name_links, delim="\t"):
