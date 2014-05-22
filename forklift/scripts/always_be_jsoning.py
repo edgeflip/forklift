@@ -79,28 +79,29 @@ def create_s3_bucket(conn_s3, bucket_name, overwrite=False):
 
 # data structs for transforming json to db rows
 
-
 class FeedFromS3(object):
     """Holds an entire feed from a single user crawl"""
 
     def __init__(self, key):
         prim_id, fbid = key.name.split("_")
 
+        feed_json = None
         with tempfile.TemporaryFile() as fp:
             key.get_contents_to_file(fp)
             fp.seek(0)
             feed_json = json.load(fp)
-            try:
-                feed_json_list = feed_json['data']
-            except KeyError:
-                logger.debug("no data in feed %s" % key.name)
-                logger.debug(str(feed_json))
-                raise
+        try:
+            feed_json_list = feed_json['data']
+        except KeyError:
+            logger.debug("no data in feed %s" % key.name)
+            logger.debug(str(feed_json))
+            raise
         logger.debug("\tread feed json with %d posts from %s" % (len(feed_json_list), key.name))
 
         self.user_id = fbid
         self.posts = []
-        for post_json in feed_json_list:
+        while feed_json_list:
+            post_json = feed_json_list.pop()
             try:
                 self.posts.append(FeedPostFromJson(post_json))
             except StandardError:
@@ -114,31 +115,45 @@ class FeedFromS3(object):
             post_fields = (self.user_id, p.post_id, p.post_ts, p.post_type, p.post_app, p.post_from,
                            p.post_link, p.post_link_domain,
                            p.post_story, p.post_description, p.post_caption, p.post_message)
-            line = delim.join(f.replace(delim, " ").replace("\n", " ").replace("\x00", "").encode('utf8', 'ignore') for f in post_fields)
-            post_lines.append(line)
+            post_lines.append(delim.join(f.replace(delim, " ").replace("\n", " ").replace("\x00", "").encode('utf8', 'ignore') for f in post_fields))
         return post_lines
 
     def get_link_lines(self, delim="\t"):
         link_lines = []
         for p in self.posts:
-            for user_id in p.to_ids.union(p.like_ids, p.comment_ids):
-                has_to = "1" if user_id in p.to_ids else ""
-                has_like = "1" if user_id in p.like_ids else ""
-                has_comm = "1" if user_id in p.comment_ids else ""
-                link_fields = (p.post_id, user_id, has_to, has_like, has_comm)
-                link_lines.append(delim.join(f.encode('utf8', 'ignore') for f in link_fields))
+            user_ids = None
+            if hasattr(p, 'to_ids'):
+                user_ids = p.to_ids
+            if hasattr(p, 'like_ids'):
+                if user_ids:
+                    user_ids = user_ids.union(p.like_ids)
+                else:
+                    user_ids = p.like_ids
+            if hasattr(p, 'comment_ids'):
+                if user_ids:
+                    user_ids = user_ids.union(p.comment_ids)
+                else:
+                    user_ids = p.comment_ids
+            if user_ids:
+                for user_id in user_ids:
+                    has_to = "1" if hasattr(p, 'to_ids') and user_id in p.to_ids else ""
+                    has_like = "1" if hasattr(p, 'like_ids') and user_id in p.like_ids else ""
+                    has_comm = "1" if hasattr(p, 'comment_ids') and user_id in p.comment_ids else ""
+                    link_fields = (p.post_id, user_id, has_to, has_like, has_comm)
+                    link_lines.append(delim.join(f.encode('utf8', 'ignore') for f in link_fields))
         return link_lines
 
 
 class FeedChunk(object):
-    feeds = None
-
     def __init__(self, keys):
-        self.feeds = []
+        self.post_lines = []
+        self.link_lines = []
         for key in keys:
             for attempt in range(3):
                 try:
-                    self.feeds.append(FeedFromS3(key))
+                    feed = FeedFromS3(key)
+                    self.post_lines.extend(feed.get_post_lines())
+                    self.link_lines.extend(feed.get_link_lines())
                     break
                 except httplib.IncompleteRead:
                     pass
@@ -147,29 +162,27 @@ class FeedChunk(object):
 
 
     def write_posts(self, bucket, key_name, delim):
-        post_lines = list(itertools.chain.from_iterable(feed.get_post_lines() for feed in self.feeds))
         key_posts = Key(bucket)
         key_posts.key = key_name
-        key_posts.set_contents_from_string("\n".join(post_lines))
+        key_posts.set_contents_from_string("\n".join(self.post_lines))
         key_posts.close()
-        return len(post_lines)
+        return len(self.post_lines)
 
 
     def write_links(self, bucket, key_name, delim):
-        link_lines = list(itertools.chain.from_iterable(feed.get_link_lines() for feed in self.feeds))
         key_links = Key(bucket)
         key_links.key = key_name
-        key_links.set_contents_from_string("\n".join(link_lines))
+        key_links.set_contents_from_string("\n".join(self.link_lines))
         key_links.close()
-        return len(link_lines)
+        return len(self.link_lines)
 
 
     def write_s3(self, conn_s3, bucket_name, key_name_posts, key_name_links, delim="\t"):
         bucket = conn_s3.get_bucket(bucket_name)
-        len_post_lines = self.write_posts(bucket, key_name_posts, delim)
-        len_link_lines = self.write_links(bucket, key_name_links, delim)
+        num_posts = self.write_posts(bucket, key_name_posts, delim)
+        num_links = self.write_links(bucket, key_name_links, delim)
 
-        return len_post_lines, len_link_lines
+        return num_posts, num_links
 
 
 # Despite what the docs say, datetime.strptime() format doesn't like %z
@@ -201,14 +214,14 @@ class FeedPostFromJson(object):
         self.post_caption = post_json.get('caption', "")
         self.post_message = post_json.get('message', "")
 
-        self.to_ids = set()
-        self.like_ids = set()
-        self.comment_ids = set()
-        if 'to' in post_json:
+        if 'to' in post_json and 'data' in post_json['to']:
+            self.to_ids = set()
             self.to_ids.update([user['id'] for user in post_json['to']['data']])
-        if 'likes' in post_json:
+        if 'likes' in post_json and 'data' in post_json['likes']:
+            self.like_ids = set()
             self.like_ids.update([user['id'] for user in post_json['likes']['data']])
-        if 'comments' in post_json:
+        if 'comments' in post_json and 'data' in post_json['comments']:
+            self.comment_ids = set()
             self.comment_ids.update([user['id'] for user in post_json['comments']['data']])
 
 
