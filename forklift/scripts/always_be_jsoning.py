@@ -94,10 +94,10 @@ class FeedFromS3(object):
         try:
             feed_json_list = feed_json['data']
         except KeyError:
-            #logger.debug("no data in feed %s" % key.name)
-            #logger.debug(str(feed_json))
+            logger.debug("no data in feed %s" % key.name)
+            logger.debug(str(feed_json))
             raise
-        #logger.debug("\tread feed json with %d posts from %s" % (len(feed_json_list), key.name))
+        logger.debug("\tread feed json with %d posts from %s" % (len(feed_json_list), key.name))
 
         self.user_id = fbid
         self.posts = []
@@ -107,7 +107,7 @@ class FeedFromS3(object):
                 self.posts.append(FeedPostFromJson(post_json))
             except StandardError:
                 logger.debug("error parsing: " + str(post_json))
-                # logger.debug("full feed: " + str(feed_json_list))
+                logger.debug("full feed: " + str(feed_json_list))
                 raise
 
     def get_post_lines(self, delim="\t"):
@@ -245,12 +245,10 @@ def handle_feed_s3(args):
     keys = args[0]  #zzz todo: there's got to be a better way to handle this
 
     pid = os.getpid()
-    #logger.debug("pid " + str(pid) + ", " + " have conn")
 
     # name should have format primary_secondary; e.g., "100000008531200_1000760833"
     feed_chunk = FeedChunk(keys)
 
-    #logger.debug("done with the chunk")
     key_name_posts = "posts/" + str(uuid.uuid4())
     key_name_links = "links/" + str(uuid.uuid4())
     post_count, link_count = feed_chunk.write_s3(conn_s3_global, S3_OUT_BUCKET_NAME, key_name_posts, key_name_links)
@@ -263,9 +261,9 @@ def handle_feed_s3(args):
 
 def process_feeds(worker_count, overwrite):
 
-    #conn_s3 = get_conn_s3()
-    #create_s3_bucket(conn_s3, S3_OUT_BUCKET_NAME, overwrite)
-    #conn_s3.close()
+    conn_s3 = get_conn_s3()
+    create_s3_bucket(conn_s3, S3_OUT_BUCKET_NAME, overwrite)
+    conn_s3.close()
 
     logger.info("process %d farming out to %d childs" % (os.getpid(), worker_count))
     pool = multiprocessing.Pool(processes=worker_count, initializer=set_global_conns)
@@ -278,7 +276,7 @@ def process_feeds(worker_count, overwrite):
     for i, counts_tup in enumerate(pool.imap_unordered(handle_feed_s3, feed_arg_iter)):
         if i % 1000 == 0:
             time_delt = datetime.timedelta(seconds=int(time.time()-time_start))
-            logger.info("\t%s %d feeds, %d posts, %d links" % (str(time_delt), i, post_line_count_tot, link_line_count_tot))
+            logger.info("\t%s %d feed chunks of size %s, %d posts, %d links" % (str(time_delt), i, FEEDS_PER_FILE, post_line_count_tot, link_line_count_tot))
         if counts_tup is None:
             continue
         else:
