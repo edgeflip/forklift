@@ -9,4 +9,5 @@ celery==3.1.7
 PyYAML==3.10
 raven==3.6.0
 boto==2.13.3
+unicodecsv==0.9.4
 -e git+git@github.com:systemadev/pymlconf.git#egg=pymlconf
