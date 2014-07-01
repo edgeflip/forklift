@@ -37,7 +37,8 @@ FIELDS = (
     'religion',
     'sports',
     'tv',
-    'wall_count'
+    'wall_count',
+    'updated',
 )
 
 S3_BUCKET_NAME = 'redshiftxfer'
@@ -55,7 +56,14 @@ def s3_key_iter(bucket):
     for feed in feeds:
         yield feed
 
-def format_field(obj):
+def format_field(field, obj):
+    if field == 'birthday' or field == 'updated':
+        if obj['n']:
+            return datetime.datetime.fromtimestamp(obj['n'])
+        elif field == 'updated':
+            return datetime.datetime.now()
+        else:
+            return None
     if obj.has_key('n'):
         return obj['n']
     elif obj.has_key('s'):
@@ -67,7 +75,7 @@ def format_field(obj):
 
 
 def format_user(user):
-    return [format_field(user[field]) if field in user else '' for field in FIELDS]
+    return [format_field(field, user[field]) if field in user else '' for field in FIELDS]
 
 
 def extract_user(line):
