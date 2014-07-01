@@ -44,12 +44,12 @@ def ip_load_hour(hour):
 @app.task
 def post_import(filename):
     with checkout_connection() as connection:
-        load_from_s3(connection, S3_OUT_BUCKET_NAME, filename, 'posts'):
+        load_from_s3(connection, S3_OUT_BUCKET_NAME, filename, 'posts')
 
 @app.task
 def post_user_import(filename):
     with checkout_connection() as connection:
-        load_from_s3(connection, S3_OUT_BUCKET_NAME, filename, 'user_posts'):
+        load_from_s3(connection, S3_OUT_BUCKET_NAME, filename, 'user_posts')
 
 
 @app.task
