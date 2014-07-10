@@ -416,15 +416,19 @@ class FBSyncTestCase(ForkliftTestCase):
 
     @patch('forklift.db.utils.optimize')
     def test_merge_user_posts(self, optimize_mock):
-
         old_user_id = 40
         new_user_id = 50
+        # 1. pre-existing data
         self.insertDummyUserPost(self.EXISTING_POST_ID, old_user_id, table=self.user_posts_table)
+
+        # 2. new data to load
         self.insertDummyUserPost(self.EXISTING_POST_ID, old_user_id, table=self.user_posts_incremental_table)
         self.insertDummyUserPost(self.EXISTING_POST_ID, new_user_id, table=self.user_posts_incremental_table)
 
+        # 3. do it
         fbsync.merge_user_posts(self.user_posts_incremental_table, self.user_posts_table, self.connection)
 
+        # 4. make sure we have data, tied to the correct post
         self.assertEqual(2, get_rowcount(self.user_posts_table, self.connection))
         self.assert_num_results(2, self.user_posts_table, post_id=self.EXISTING_POST_ID)
 
@@ -435,10 +439,13 @@ class FBSyncTestCase(ForkliftTestCase):
     def test_add_new_data(self, load_mock, optimize_mock):
         first_post_id = '1_2'
         first_user = '1'
+
+        # 1. pre-existing data
         self.__class__.insertDummyPost(table=self.posts_table, post_id=first_post_id)
         self.insertDummyUserPost(first_post_id, first_user, table=self.user_posts_table)
 
         second_post_id = '2_3'
+        # 2. insert data with duplicates into the raw table
         def fake_load_from_s3(connection, bucket_name, key_name, table_name, create_statement=None):
             if table_name.startswith('posts'):
                 self.__class__.insertDummyPost(table=fbsync.raw_table_name(self.posts_incremental_table), post_id=second_post_id)
@@ -447,7 +454,11 @@ class FBSyncTestCase(ForkliftTestCase):
                 self.insertDummyUserPost(second_post_id, first_user, table=fbsync.raw_table_name(self.user_posts_incremental_table))
                 self.insertDummyUserPost(second_post_id, first_user, table=fbsync.raw_table_name(self.user_posts_incremental_table))
         load_mock.side_effect = fake_load_from_s3
+
+        # 3. the s3 arguments don't really matter here
         fbsync.add_new_data('stuff', 'stuff', 'stuff', self.connection)
+
+        # 4. verify both tables received correct data
         self.assertEqual(2, get_rowcount(self.posts_table, self.connection))
         self.assertEqual(2, get_rowcount(self.user_posts_table, self.connection))
 
