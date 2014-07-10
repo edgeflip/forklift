@@ -384,7 +384,7 @@ class FBSyncTestCase(ForkliftTestCase):
         self.assert_num_results(0, self.posts_table)
 
         # 2. run the routine
-        fbsync.dedupe(self.connection, self.posts_raw_table, self.posts_table)
+        fbsync.dedupe(self.posts_raw_table, self.posts_table, self.connection)
 
         # 3. make sure that the data got transferred to the final table without the dupe
         self.assert_num_results(2, self.posts_raw_table)
@@ -404,7 +404,7 @@ class FBSyncTestCase(ForkliftTestCase):
         self.__class__.insertDummyPost(table=self.posts_incremental_table, post_id=new_post_id)
 
         # 3. run merge
-        fbsync.merge_posts(self.connection, self.posts_incremental_table, self.posts_table)
+        fbsync.merge_posts(self.posts_incremental_table, self.posts_table, self.connection)
 
         # 4. make sure that data got transferred into the final table alongside the old stuff
         self.assert_num_results(1, self.posts_table)
@@ -423,9 +423,9 @@ class FBSyncTestCase(ForkliftTestCase):
         self.insertDummyUserPost(self.EXISTING_POST_ID, old_user_id, table=self.user_posts_incremental_table)
         self.insertDummyUserPost(self.EXISTING_POST_ID, new_user_id, table=self.user_posts_incremental_table)
 
-        fbsync.merge_user_posts(self.connection, self.user_posts_incremental_table, self.user_posts_table)
+        fbsync.merge_user_posts(self.user_posts_incremental_table, self.user_posts_table, self.connection)
 
-        self.assertEqual(2, get_rowcount(self.connection, self.user_posts_table))
+        self.assertEqual(2, get_rowcount(self.user_posts_table, self.connection))
         self.assert_num_results(2, self.user_posts_table, post_id=self.EXISTING_POST_ID)
 
 
@@ -447,7 +447,7 @@ class FBSyncTestCase(ForkliftTestCase):
                 self.insertDummyUserPost(second_post_id, first_user, table=fbsync.raw_table_name(self.user_posts_incremental_table))
                 self.insertDummyUserPost(second_post_id, first_user, table=fbsync.raw_table_name(self.user_posts_incremental_table))
         load_mock.side_effect = fake_load_from_s3
-        fbsync.add_new_data(self.connection, 'stuff', 'stuff', 'stuff')
-        self.assertEqual(2, get_rowcount(self.connection, self.posts_table))
-        self.assertEqual(2, get_rowcount(self.connection, self.user_posts_table))
+        fbsync.add_new_data('stuff', 'stuff', 'stuff', self.connection)
+        self.assertEqual(2, get_rowcount(self.posts_table, self.connection))
+        self.assertEqual(2, get_rowcount(self.user_posts_table, self.connection))
 

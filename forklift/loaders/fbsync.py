@@ -57,7 +57,7 @@ def create_sql(table_name):
         raise StandardError('Table {} not recognized'.format(table_name))
 
 
-def dedupe(connection, table_with_dupes, final_table_name):
+def dedupe(table_with_dupes, final_table_name, connection):
     deduped_table_name = "{}_deduped".format(final_table_name)
     dbutils.drop_table_if_exists(deduped_table_name, connection)
     sql = dedupe_sql(final_table_name).format(
@@ -66,7 +66,7 @@ def dedupe(connection, table_with_dupes, final_table_name):
     )
     logger.info('Deduping records from {} into staging table {}'.format(table_with_dupes, deduped_table_name))
     connection.execute(sql)
-    logger.info('{} records after deduping'.format(dbutils.get_rowcount(connection, deduped_table_name)))
+    logger.info('{} records after deduping'.format(dbutils.get_rowcount(deduped_table_name, connection)))
     dbutils.deploy_table(
         final_table_name,
         deduped_table_name,
@@ -112,18 +112,18 @@ def dedupe_sql(base_table_name):
 
 
 # when FBSync just grabbed some new data and we want to merge it in
-def add_new_data(connection, bucket_name, posts_folder, user_posts_folder):
+def add_new_data(bucket_name, posts_folder, user_posts_folder, connection):
     posts_incremental = incremental_table_name(POSTS_TABLE)
     user_posts_incremental = incremental_table_name(USER_POSTS_TABLE)
 
-    load_and_dedupe(connection, bucket_name, posts_folder, posts_incremental)
-    load_and_dedupe(connection, bucket_name, user_posts_folder, user_posts_incremental)
+    load_and_dedupe(bucket_name, posts_folder, posts_incremental, connection)
+    load_and_dedupe(bucket_name, user_posts_folder, user_posts_incremental, connection)
 
-    merge_posts(connection, posts_incremental, POSTS_TABLE)
-    merge_user_posts(connection, user_posts_incremental, USER_POSTS_TABLE)
+    merge_posts(posts_incremental, POSTS_TABLE, connection)
+    merge_user_posts(user_posts_incremental, USER_POSTS_TABLE, connection)
 
 
-def load_and_dedupe(connection, bucket_name, source_folder, table_name, optimize=False):
+def load_and_dedupe(bucket_name, source_folder, table_name, connection, optimize=False):
     raw_table = raw_table_name(table_name)
     logger.info('Loading raw data into {} from s3://{}/{}'.format(raw_table, bucket_name, source_folder))
     dbutils.load_from_s3(
@@ -133,8 +133,8 @@ def load_and_dedupe(connection, bucket_name, source_folder, table_name, optimize
         raw_table,
         create_statement=create_sql(raw_table)
     )
-    logger.info('{} rows loaded into {}'.format(dbutils.get_rowcount(connection, raw_table), raw_table))
-    dedupe(connection, raw_table, table_name)
+    logger.info('{} rows loaded into {}'.format(dbutils.get_rowcount(raw_table, connection), raw_table))
+    dedupe(raw_table, table_name, connection)
     if optimize:
         logger.info('Optimizing table {}'.format(table_name))
         optimize(table_name)
@@ -142,7 +142,7 @@ def load_and_dedupe(connection, bucket_name, source_folder, table_name, optimize
 
 
 # take deduped new data and merge it into the main table
-def merge_posts(connection, incremental_table, final_table):
+def merge_posts(incremental_table, final_table, connection):
     with connection.begin():
         temp_table = incremental_table + '_unique'
         # populate list of new post ids
@@ -160,16 +160,7 @@ def merge_posts(connection, incremental_table, final_table):
             final_table=final_table
         ))
 
-        one = connection.execute('select * from {}'.format('posts_incremental_raw'))
-        for row in one:
-            print row
-
-        print 'two'
-        two = connection.execute('select * from {}'.format(final_table))
-        for row in two:
-            print row
-
-        logger.info('{} new posts found'.format(dbutils.get_rowcount(connection, temp_table)))
+        logger.info('{} new posts found'.format(dbutils.get_rowcount(temp_table, connection)))
 
         # insert new versions into final table
         logger.info('Inserting new rows from {} into {}'.format(incremental_table, final_table))
@@ -184,12 +175,10 @@ def merge_posts(connection, incremental_table, final_table):
             temp_table=temp_table,
         ))
 
-    dbutils.optimize(final_table)
+    dbutils.optimize(final_table, connection)
 
 
-def merge_user_posts(connection, incremental_table=None, final_table=None):
-    final_table = final_table or USER_POSTS_TABLE
-    incremental_table = incremental_table or incremental_table_name(final_table)
+def merge_user_posts(incremental_table, final_table, connection):
     with connection.begin():
         temp_table = incremental_table + '_unique'
         # populate list of new post ids
@@ -207,7 +196,7 @@ def merge_user_posts(connection, incremental_table=None, final_table=None):
             final_table=final_table
         ))
 
-        logger.info('{} new user_posts found'.format(dbutils.get_rowcount(connection, temp_table)))
+        logger.info('{} new user_posts found'.format(dbutils.get_rowcount(temp_table, connection)))
 
         # insert new versions into final table
         logger.info('Inserting new rows from {} into {}'.format(incremental_table, final_table))
@@ -222,4 +211,4 @@ def merge_user_posts(connection, incremental_table=None, final_table=None):
             temp_table=temp_table,
         ))
 
-    dbutils.optimize(final_table)
+    dbutils.optimize(final_table, connection)

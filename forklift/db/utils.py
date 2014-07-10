@@ -38,8 +38,8 @@ def drop_table(table_name, connection):
     )
 
 
-def get_rowcount(connection, table):
-    new_row_result = connection.execute('select count(*) from {}'.format(table))
+def get_rowcount(table_name, connection):
+    new_row_result = connection.execute('select count(*) from {}'.format(table_name))
     for row in new_row_result:
         return int(row[0])
 
@@ -130,7 +130,7 @@ def get_load_errs(connection):
     return ret
 
 
-def optimize(connection, table):
+def optimize(table, connection):
     connection.execute("VACUUM {}".format(table))
     connection.execute("ANALYZE {}".format(table))
 

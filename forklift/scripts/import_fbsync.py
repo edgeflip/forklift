@@ -24,5 +24,5 @@ if __name__ == '__main__':
     user_posts_folder = args.user_posts_folder
 
     with checkout_raw_connection as connection:
-        load_and_dedupe(connection, bucket_name, posts_folder, POSTS_TABLE, optimize=True)
-        load_and_dedupe(connection, bucket_name, user_posts_folder, USER_POSTS_TABLE, optimize=True)
+        load_and_dedupe(bucket_name, posts_folder, POSTS_TABLE, connection, optimize=True)
+        load_and_dedupe(bucket_name, user_posts_folder, USER_POSTS_TABLE, connection, optimize=True)

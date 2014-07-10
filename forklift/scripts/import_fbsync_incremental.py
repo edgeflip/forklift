@@ -21,4 +21,4 @@ if __name__ == '__main__':
     user_posts_folder = args.user_posts_folder
 
     with checkout_raw_connection() as connection:
-        add_new_data(connection, bucket_name, posts_folder, user_posts_folder)
+        add_new_data(bucket_name, posts_folder, user_posts_folder, connection)
