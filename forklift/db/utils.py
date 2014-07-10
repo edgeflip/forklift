@@ -2,6 +2,7 @@ from logging import debug, info
 from sqlalchemy.exc import ProgrammingError
 from contextlib import contextmanager
 from forklift.db.base import engine
+from forklift.settings import AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
 
 
 DOES_NOT_EXIST_MESSAGE_TEMPLATE = '"{0}" does not exist'
@@ -107,8 +108,8 @@ def load_from_s3(connection, bucket_name, key_name, table_name, delim="\t", crea
                 table=table_name,
                 bucket=bucket_name,
                 key=key_name,
-                access=AWS_ACCESS_KEY,
-                secret=AWS_SECRET_KEY,
+                access=AWS_ACCESS_KEY_ID,
+                secret=AWS_SECRET_ACCESS_KEY,
             )
         )
     except ProgrammingError as e:
