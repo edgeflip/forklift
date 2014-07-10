@@ -325,15 +325,16 @@ class FBSyncTestCase(ForkliftTestCase):
         cls.user_posts_incremental_table = fbsync.incremental_table_name(cls.user_posts_table)
         cls.create_tables(cls.user_posts_table)
 
-        # insert beginning data
-        cls.insertDummyPost()
-        cls.insertDummyPost()
+        # insert some common data that most of the tests will use (a post with a dupe)
+        cls.insertDummyPost(cls.posts_raw_table)
+        cls.insertDummyPost(cls.posts_raw_table)
 
 
     @classmethod
     def create_tables(cls, table_name):
-        drop_table_if_exists(table_name, cls.connection)
+        drop_table_if_exists(fbsync.raw_table_name(table_name), cls.connection)
         cls.connection.execute(fbsync.create_sql(fbsync.raw_table_name(table_name)))
+        drop_table_if_exists(table_name, cls.connection)
         create_new_table(table_name, fbsync.raw_table_name(table_name), cls.connection)
         drop_table_if_exists(fbsync.incremental_table_name(table_name), cls.connection)
         create_new_table(fbsync.incremental_table_name(table_name), fbsync.raw_table_name(table_name), cls.connection)
@@ -348,8 +349,7 @@ class FBSyncTestCase(ForkliftTestCase):
 
 
     @classmethod
-    def insertDummyPost(cls, table=None, post_type='stuff', post_id=None):
-        table = table or cls.posts_raw_table
+    def insertDummyPost(cls, table, post_type='stuff', post_id=None):
         post_id = post_id or cls.EXISTING_POST_ID
         # beginning data is inserted into the raw table, that is, the one which houses duplicates
         # can't use the ORM here because no primary key can possibly be involved when dealing with dupes like these

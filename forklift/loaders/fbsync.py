@@ -137,11 +137,11 @@ def load_and_dedupe(bucket_name, source_folder, table_name, connection, optimize
     dedupe(raw_table, table_name, connection)
     if optimize:
         logger.info('Optimizing table {}'.format(table_name))
-        optimize(table_name)
+        optimize(table_name, connection)
 
 
 
-# take deduped new data and merge it into the main table
+# take deduped new posts from 'incremental_table' and merge them into 'final_table'
 def merge_posts(incremental_table, final_table, connection):
     with connection.begin():
         temp_table = incremental_table + '_unique'
@@ -178,6 +178,7 @@ def merge_posts(incremental_table, final_table, connection):
     dbutils.optimize(final_table, connection)
 
 
+# take deduped new user_posts from 'incremental_table' and merge them into 'final_table'
 def merge_user_posts(incremental_table, final_table, connection):
     with connection.begin():
         temp_table = incremental_table + '_unique'

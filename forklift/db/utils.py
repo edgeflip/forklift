@@ -113,8 +113,7 @@ def load_from_s3(connection, bucket_name, key_name, table_name, delim="\t", crea
             )
         )
     except ProgrammingError as e:
-        #info("error loading: \n" + get_load_errs(connection))
-        info("error loading: \n")
+        info("error loading: \n" + get_load_errs(connection))
         raise
 
 
@@ -130,6 +129,12 @@ def get_load_errs(connection):
     return ret
 
 
+# VACUUM reclaims diskspace and more importantly re-sorts all rows
+# http://docs.aws.amazon.com/redshift/latest/dg/r_VACUUM_command.html
+# ANALYZE updates table statistics for use by the query planner
+# http://docs.aws.amazon.com/redshift/latest/dg/r_ANALYZE.html
+# Amazon recommends that you run them both after adding or deleting rows
+# to help query speeds
 def optimize(table, connection):
     connection.execute("VACUUM {}".format(table))
     connection.execute("ANALYZE {}".format(table))
