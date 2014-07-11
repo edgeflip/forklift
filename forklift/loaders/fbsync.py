@@ -1,7 +1,4 @@
 import logging
-import os
-import sys
-sys.path.append(os.path.abspath(os.curdir))
 import forklift.db.utils as dbutils
 
 DB_TEXT_LEN = 4096
@@ -54,7 +51,7 @@ def create_sql(table_name):
             )
         """.format(table=table_name)
     else:
-        raise StandardError('Table {} not recognized'.format(table_name))
+        raise ValueError('Table {} not recognized'.format(table_name))
 
 
 def dedupe(table_with_dupes, final_table_name, connection):
@@ -64,9 +61,9 @@ def dedupe(table_with_dupes, final_table_name, connection):
         new_table=deduped_table_name,
         raw_table=table_with_dupes
     )
-    logger.info('Deduping records from {} into staging table {}'.format(table_with_dupes, deduped_table_name))
+    logger.info('Deduping records from %s into staging table %s', table_with_dupes, deduped_table_name)
     connection.execute(sql)
-    logger.info('{} records after deduping'.format(dbutils.get_rowcount(deduped_table_name, connection)))
+    logger.info('%s records after deduping', dbutils.get_rowcount(deduped_table_name, connection))
     dbutils.deploy_table(
         final_table_name,
         deduped_table_name,
@@ -108,7 +105,7 @@ def dedupe_sql(base_table_name):
             group by fbid_post
         """
     else:
-        raise StandardError('Table {} not recognized'.format(base_table_name))
+        raise ValueError('Table {} not recognized'.format(base_table_name))
 
 
 # when FBSync just grabbed some new data and we want to merge it in
@@ -125,7 +122,7 @@ def add_new_data(bucket_name, posts_folder, user_posts_folder, connection):
 
 def load_and_dedupe(bucket_name, source_folder, table_name, connection, optimize=False):
     raw_table = raw_table_name(table_name)
-    logger.info('Loading raw data into {} from s3://{}/{}'.format(raw_table, bucket_name, source_folder))
+    logger.info('Loading raw data into %s from s3://%s/%s', raw_table, bucket_name, source_folder)
     dbutils.load_from_s3(
         connection,
         bucket_name,
@@ -133,10 +130,10 @@ def load_and_dedupe(bucket_name, source_folder, table_name, connection, optimize
         raw_table,
         create_statement=create_sql(raw_table)
     )
-    logger.info('{} rows loaded into {}'.format(dbutils.get_rowcount(raw_table, connection), raw_table))
+    logger.info('%s rows loaded into %s', dbutils.get_rowcount(raw_table, connection), raw_table)
     dedupe(raw_table, table_name, connection)
     if optimize:
-        logger.info('Optimizing table {}'.format(table_name))
+        logger.info('Optimizing table %s', table_name)
         optimize(table_name, connection)
 
 
@@ -147,7 +144,7 @@ def merge_posts(incremental_table, final_table, connection):
         temp_table = incremental_table + '_unique'
         # populate list of new post ids
         dbutils.drop_table_if_exists(temp_table, connection)
-        logger.info('Populating list of new post ids from {} compared with records in {}'.format(incremental_table, final_table))
+        logger.info('Populating list of new post ids from %s compared with records in %s', incremental_table, final_table)
         connection.execute("""
             CREATE TEMPORARY TABLE {temp_table} AS
             SELECT distinct(fbid_post) fbid_post
@@ -160,10 +157,10 @@ def merge_posts(incremental_table, final_table, connection):
             final_table=final_table
         ))
 
-        logger.info('{} new posts found'.format(dbutils.get_rowcount(temp_table, connection)))
+        logger.info('%s new posts found', dbutils.get_rowcount(temp_table, connection))
 
         # insert new versions into final table
-        logger.info('Inserting new rows from {} into {}'.format(incremental_table, final_table))
+        logger.info('Inserting new rows from %s into %s', incremental_table, final_table)
         connection.execute("""
             INSERT INTO {final_table}
             SELECT {incremental_table}.*
@@ -184,7 +181,7 @@ def merge_user_posts(incremental_table, final_table, connection):
         temp_table = incremental_table + '_unique'
         # populate list of new post ids
         dbutils.drop_table_if_exists(temp_table, connection)
-        logger.info('Populating list of new post ids from {} compared with records in {}'.format(incremental_table, final_table))
+        logger.info('Populating list of new post ids from %s compared with records in %s', incremental_table, final_table)
         connection.execute("""
             CREATE TEMPORARY TABLE {temp_table} AS
             SELECT distinct fbid_post, fbid_user
@@ -197,10 +194,10 @@ def merge_user_posts(incremental_table, final_table, connection):
             final_table=final_table
         ))
 
-        logger.info('{} new user_posts found'.format(dbutils.get_rowcount(temp_table, connection)))
+        logger.info('%s new user_posts found', dbutils.get_rowcount(temp_table, connection))
 
         # insert new versions into final table
-        logger.info('Inserting new rows from {} into {}'.format(incremental_table, final_table))
+        logger.info('Inserting new rows from %s into %s', incremental_table, final_table)
         connection.execute("""
             INSERT INTO {final_table}
             SELECT {incremental_table}.*

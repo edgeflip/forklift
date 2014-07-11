@@ -1,8 +1,9 @@
 import argparse
+from contextlib import closing
 import os
 import sys
 sys.path.append(os.path.abspath(os.curdir))
-from forklift.db.utils import checkout_raw_connection
+from forklift.db.base import engine
 from forklift.loaders.fbsync import load_and_dedupe, POSTS_TABLE, USER_POSTS_TABLE
 
 
@@ -32,6 +33,6 @@ if __name__ == '__main__':
     posts_folder = args.posts_folder
     user_posts_folder = args.user_posts_folder
 
-    with checkout_raw_connection() as connection:
+    with closing(engine.connect()) as connection:
         load_and_dedupe(bucket_name, posts_folder, POSTS_TABLE, connection, optimize=True)
         load_and_dedupe(bucket_name, user_posts_folder, USER_POSTS_TABLE, connection, optimize=True)

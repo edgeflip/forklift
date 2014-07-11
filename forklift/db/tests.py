@@ -25,8 +25,9 @@ class DbTestCase(ForkliftTestCase):
         load_from_s3(connectionMock, expected_bucket, expected_key, expected_table)
         self.assertEqual(connectionMock.execute.call_count, 1)
         query = connectionMock.execute.call_args[0][0]
-        self.assertTrue(
-            "COPY {} FROM 's3://{}/{}'".format(expected_table, expected_bucket, expected_key) in query
+        self.assertIn(
+            "COPY {} FROM 's3://{}/{}'".format(expected_table, expected_bucket, expected_key),
+            query
         )
 
 

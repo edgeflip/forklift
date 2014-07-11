@@ -3,7 +3,7 @@ from mock import patch
 from sqlalchemy import Integer, BigInteger, DateTime, String
 from sqlalchemy.exc import ProgrammingError
 
-from forklift.db.utils import staging_table, drop_table_if_exists, checkout_raw_connection, create_new_table, get_rowcount
+from forklift.db.utils import staging_table, drop_table_if_exists, create_new_table, get_rowcount
 from forklift.models.base import Base
 from forklift.models.raw import Event, Visit, Visitor
 from forklift.warehouse.definition import HourlyAggregateTable

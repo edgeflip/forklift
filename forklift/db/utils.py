@@ -1,6 +1,6 @@
 from logging import debug, info
 from sqlalchemy.exc import ProgrammingError
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from forklift.db.base import engine
 from forklift.settings import AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
 
@@ -11,11 +11,11 @@ DOES_NOT_EXIST_MESSAGE_TEMPLATE = '"{0}" does not exist'
 def drop_table_if_exists(table, connection):
     try:
         with connection.begin():
-            debug('Dropping table {}'.format(table))
+            debug('Dropping table %s', table)
             connection.execute("DROP TABLE {0}".format(table))
     except ProgrammingError as e:
         if DOES_NOT_EXIST_MESSAGE_TEMPLATE.format(table) in str(e):
-            debug("Table {0} did not exist, so no dropping was necessary.".format(table))
+            debug("Table %s did not exist, so no dropping was necessary.", table)
         else:
             raise
 
@@ -62,19 +62,10 @@ def checkout_connection():
         connection.close()
 
 
-@contextmanager
-def checkout_raw_connection():
-    connection = engine.connect()
-    try:
-        yield connection
-    finally:
-        connection.close()
-
-
 # promote a staging table with up-to-date data into production by renaming it
 # however, we move the existing one out of the way first in case something goes wrong
 def deploy_table(table, staging_table, old_table, connection):
-    info('Promoting staging table ({}) to production ({})'.format(staging_table, table))
+    info('Promoting staging table (%s) to production (%s)', staging_table, table)
     drop_table_if_exists(old_table, connection)
 
     # swap the staging table with the real one
@@ -83,7 +74,7 @@ def deploy_table(table, staging_table, old_table, connection):
             connection.execute("ALTER TABLE {0} rename to {1}".format(table, old_table))
         except ProgrammingError as e:
             if DOES_NOT_EXIST_MESSAGE_TEMPLATE.format(table) in str(e):
-                info("Table {0} did not exist, so no renaming was necessary.".format(table))
+                info("Table %s did not exist, so no renaming was necessary.", table)
                 # roll back the transaction so the second alter can still commence
                 transaction.rollback()
             else:
@@ -113,7 +104,7 @@ def load_from_s3(connection, bucket_name, key_name, table_name, delim="\t", crea
             )
         )
     except ProgrammingError as e:
-        info("error loading: \n" + get_load_errs(connection))
+        info("error loading: \n %s", get_load_errs(connection))
         raise
 
 
@@ -125,7 +116,7 @@ def get_load_errs(connection):
                            "raw_field_value", "err_code", "err_reason"]) + ": %s\n"
     ret = ""
     for row in connection.execute(sql):
-        ret += fmt % tuple([str(field)[:80] for field in row])
+        ret += fmt % tuple(str(field)[:80] for field in row)
     return ret
 
 
