@@ -112,10 +112,25 @@ class FeedFromS3(object):
 
     def get_post_lines(self, delim="\t"):
         post_lines = []
-        for p in self.posts:
-            post_fields = (self.user_id, p.post_id, p.post_ts, p.post_type, p.post_app, p.post_from,
-                           p.post_link, p.post_link_domain,
-                           p.post_story, p.post_description, p.post_caption, p.post_message)
+        for post in self.posts:
+            post_fields = (
+                self.user_id,
+                post.post_id,
+                post.post_ts,
+                post.post_type,
+                post.post_app,
+                post.post_from,
+                post.post_link,
+                post.post_link_domain,
+                post.post_story,
+                post.post_description,
+                post.post_caption,
+                post.post_message,
+                len(post.like_ids),
+                len(post.comment_ids),
+                len(post.to_ids),
+                len(set(post.comment_ids)),
+            )
             post_lines.append(delim.join(f.replace(delim, " ").replace("\n", " ").replace("\x00", "").encode('utf8', 'ignore') for f in post_fields))
         return post_lines
 
