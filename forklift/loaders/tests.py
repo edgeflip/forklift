@@ -1,13 +1,15 @@
 import datetime
+from mock import patch
 from sqlalchemy import Integer, BigInteger, DateTime, String
 from sqlalchemy.exc import ProgrammingError
 
-from forklift.db.utils import staging_table, drop_table_if_exists
+from forklift.db.utils import staging_table, drop_table_if_exists, create_new_table, get_rowcount
 from forklift.models.base import Base
 from forklift.models.raw import Event, Visit, Visitor
 from forklift.warehouse.definition import HourlyAggregateTable
 from forklift.warehouse.columns import Fact, Dimension
 import forklift.loaders.fact.hourly as loaders
+import forklift.loaders.fbsync as fbsync
 
 from forklift.testing import ForkliftTestCase
 
@@ -304,3 +306,159 @@ class EdgeflipLoaderTestCase(LoaderTestCase):
             }
 
             self.assertSingleResult(expected, result)
+
+
+class FBSyncTestCase(ForkliftTestCase):
+    EXISTING_POST_ID = "54_244"
+
+    @classmethod
+    def setUpClass(cls):
+        super(FBSyncTestCase, cls).setUpClass()
+        # set up posts tables
+        cls.posts_table = fbsync.POSTS_TABLE
+        cls.posts_raw_table = fbsync.raw_table_name(cls.posts_table)
+        cls.posts_incremental_table = fbsync.incremental_table_name(cls.posts_table)
+        cls.create_tables(cls.posts_table)
+
+        cls.user_posts_table = fbsync.USER_POSTS_TABLE
+        cls.user_posts_raw_table = fbsync.raw_table_name(cls.user_posts_table)
+        cls.user_posts_incremental_table = fbsync.incremental_table_name(cls.user_posts_table)
+        cls.create_tables(cls.user_posts_table)
+
+        # insert some common data that most of the tests will use (a post with a dupe)
+        cls.insertDummyPost(cls.posts_raw_table)
+        cls.insertDummyPost(cls.posts_raw_table)
+
+
+    @classmethod
+    def create_tables(cls, table_name):
+        drop_table_if_exists(fbsync.raw_table_name(table_name), cls.connection)
+        cls.connection.execute(fbsync.create_sql(fbsync.raw_table_name(table_name)))
+        drop_table_if_exists(table_name, cls.connection)
+        create_new_table(table_name, fbsync.raw_table_name(table_name), cls.connection)
+        drop_table_if_exists(fbsync.incremental_table_name(table_name), cls.connection)
+        create_new_table(fbsync.incremental_table_name(table_name), fbsync.raw_table_name(table_name), cls.connection)
+
+
+    def setUp(self):
+        self.transaction = self.connection.begin_nested()
+
+
+    def tearDown(self):
+        self.transaction.rollback()
+
+
+    @classmethod
+    def insertDummyPost(cls, table, post_type='stuff', post_id=None):
+        post_id = post_id or cls.EXISTING_POST_ID
+        # beginning data is inserted into the raw table, that is, the one which houses duplicates
+        # can't use the ORM here because no primary key can possibly be involved when dealing with dupes like these
+        ts = datetime.datetime(2014,2,1,2,0)
+        cls.connection.execute(
+            "insert into {} (fbid_post, fbid_user, ts, type) values (%s, %s, %s, %s)".format(table),
+            (post_id, 65, ts, post_type)
+        )
+
+
+    def insertDummyUserPost(self, post_id, user_id, table=None):
+        table = table or fbsync.raw_table_name(self.user_posts_table)
+        self.connection.execute(
+            "insert into {} (fbid_post, fbid_user, user_to) values (%s, %s, %s)".format(table),
+            (post_id, user_id, True)
+        )
+
+
+    def assert_num_results(self, num, table, post_id=None):
+        post_id = post_id or self.EXISTING_POST_ID
+        self.assertSingleResult(
+            { 'count': num },
+            self.connection.execute(
+                'select count(*) as count from {} where fbid_post = %s'.format(table),
+                (post_id,)
+            )
+        )
+
+    def test_dedupe(self):
+        # 1. make sure the raw table is set up with a dupe and the final table doesn't have anything yet
+        self.assert_num_results(2, self.posts_raw_table)
+        self.assert_num_results(0, self.posts_table)
+
+        # 2. run the routine
+        fbsync.dedupe(self.posts_raw_table, self.posts_table, self.connection)
+
+        # 3. make sure that the data got transferred to the final table without the dupe
+        self.assert_num_results(2, self.posts_raw_table)
+        self.assert_num_results(1, self.posts_table)
+
+
+    @patch('forklift.db.utils.optimize')
+    def test_merge_posts(self, optimize_mock):
+        new_post_id = "123_456"
+
+        # 1. put some pre-existing data in the final table, but make sure it's clean beforehand
+        self.assert_num_results(0, self.posts_table)
+        self.assert_num_results(0, self.posts_table, post_id=new_post_id)
+        self.__class__.insertDummyPost(table=self.posts_table)
+
+        # 2. put some new data in the incremental table
+        self.__class__.insertDummyPost(table=self.posts_incremental_table, post_id=new_post_id)
+
+        # 3. run merge
+        fbsync.merge_posts(self.posts_incremental_table, self.posts_table, self.connection)
+
+        # 4. make sure that data got transferred into the final table alongside the old stuff
+        self.assert_num_results(1, self.posts_table)
+        self.assert_num_results(1, self.posts_table, post_id=new_post_id)
+
+        # 5. and we do want to optimize the tables after loading
+        self.assertEqual(optimize_mock.call_count, 1)
+
+
+    @patch('forklift.db.utils.optimize')
+    def test_merge_user_posts(self, optimize_mock):
+        old_user_id = 40
+        new_user_id = 50
+        # 1. pre-existing data
+        self.insertDummyUserPost(self.EXISTING_POST_ID, old_user_id, table=self.user_posts_table)
+
+        # 2. new data to load
+        self.insertDummyUserPost(self.EXISTING_POST_ID, old_user_id, table=self.user_posts_incremental_table)
+        self.insertDummyUserPost(self.EXISTING_POST_ID, new_user_id, table=self.user_posts_incremental_table)
+
+        # 3. do it
+        fbsync.merge_user_posts(self.user_posts_incremental_table, self.user_posts_table, self.connection)
+
+        # 4. make sure we have data, tied to the correct post
+        self.assertEqual(2, get_rowcount(self.user_posts_table, self.connection))
+        self.assert_num_results(2, self.user_posts_table, post_id=self.EXISTING_POST_ID)
+
+
+    # more of an integration test, minus the s3 stuff of course
+    @patch('forklift.db.utils.optimize')
+    @patch('forklift.db.utils.load_from_s3')
+    def test_add_new_data(self, load_mock, optimize_mock):
+        first_post_id = '1_2'
+        first_user = '1'
+
+        # 1. pre-existing data
+        self.__class__.insertDummyPost(table=self.posts_table, post_id=first_post_id)
+        self.insertDummyUserPost(first_post_id, first_user, table=self.user_posts_table)
+
+        second_post_id = '2_3'
+        # 2. insert data with duplicates into the raw table
+        def fake_load_from_s3(connection, bucket_name, key_name, table_name, create_statement=None):
+            if table_name.startswith('posts'):
+                self.__class__.insertDummyPost(table=fbsync.raw_table_name(self.posts_incremental_table), post_id=second_post_id)
+                self.__class__.insertDummyPost(table=fbsync.raw_table_name(self.posts_incremental_table), post_id=second_post_id)
+            else:
+                self.insertDummyUserPost(second_post_id, first_user, table=fbsync.raw_table_name(self.user_posts_incremental_table))
+                self.insertDummyUserPost(second_post_id, first_user, table=fbsync.raw_table_name(self.user_posts_incremental_table))
+        load_mock.side_effect = fake_load_from_s3
+
+        # 3. the s3 arguments don't really matter here
+        fbsync.add_new_data('stuff', 'stuff', 'stuff', self.connection)
+
+        # 4. verify both tables received correct data
+        self.assertEqual(2, get_rowcount(self.posts_table, self.connection))
+        self.assertEqual(2, get_rowcount(self.user_posts_table, self.connection))
+
