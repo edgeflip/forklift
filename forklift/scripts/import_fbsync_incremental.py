@@ -1,8 +1,5 @@
 import argparse
 from contextlib import closing
-import os
-import sys
-sys.path.append(os.path.abspath(os.curdir))
 from forklift.db.base import engine
 from forklift.loaders.fbsync import add_new_data
 
