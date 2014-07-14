@@ -110,7 +110,7 @@ class FeedFromS3(object):
                 logger.debug("full feed: " + str(feed_json_list))
                 raise
 
-    def transform_field(self, field):
+    def transform_field(self, field, delim):
         if isinstance(field, str):
             return field.replace(delim, " ").replace("\n", " ").replace("\x00", "").encode('utf8', 'ignore')
         else:
@@ -138,7 +138,7 @@ class FeedFromS3(object):
                 len(post.to_ids) if hasattr(post, 'to_ids') else 0,
                 len(set(post.comment_ids)) if hasattr(post, 'comments_ids') else 0,
             )
-            post_lines.append(delim.join(self.transform_field(field) for field in post_fields))
+            post_lines.append(delim.join(self.transform_field(field, delim) for field in post_fields))
         return post_lines
 
     def get_link_lines(self, delim="\t"):
