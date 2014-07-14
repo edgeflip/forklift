@@ -111,7 +111,7 @@ class FeedFromS3(object):
                 raise
 
     def transform_field(self, field, delim):
-        if isinstance(field, str):
+        if isinstance(field, basestring):
             return field.replace(delim, " ").replace("\n", " ").replace("\x00", "").encode('utf8', 'ignore')
         else:
             return field
