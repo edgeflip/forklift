@@ -19,10 +19,11 @@ import httplib
 import socket
 
 sys.path.append(os.path.abspath(os.curdir))
-from forklift.settings import S3_OUT_BUCKET_NAME, AWS_ACCESS_KEY, AWS_SECRET_KEY
+from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
 #from forklift.tasks import post_upload, post_user_upload, move_s3_file
 
 
+S3_OUT_BUCKET_NAME = "redshift_transfer_tristan"
 S3_IN_BUCKET_NAMES = [ "user_feeds_%d" % i for i in range(5) ]
 S3_DONE_DIR = "loaded"
 DB_TEXT_LEN = 4096
@@ -40,7 +41,7 @@ logger.propagate = False
 def get_conn_s3(key=AWS_ACCESS_KEY, sec=AWS_SECRET_KEY):
     return S3Connection(key, sec)
 
-def s3_key_iter(bucket_names=S3_IN_BUCKET_NAMES):
+def s3_key_iter(bucket_names):
     conn_s3 = get_conn_s3()
     for b, bucket_name in enumerate(bucket_names):
         logger.debug("reading bucket %d/%d (%s)" % (b, len(bucket_names), bucket_name))
@@ -114,7 +115,7 @@ class FeedFromS3(object):
         if isinstance(field, basestring):
             return field.replace(delim, " ").replace("\n", " ").replace("\x00", "").encode('utf8', 'ignore')
         else:
-            return field
+            return str(field)
 
 
     def get_post_lines(self, delim="\t"):
@@ -254,7 +255,7 @@ class FeedPostFromJson(object):
             self.comment_ids.update([user['id'] for user in post_json['comments']['data']])
 
 
-# Each worker gets its own Redshift connection, manage that with a global variable.  There's prob
+# Each worker gets its own S3 connection, manage that with a global variable.  There's prob
 # a better way to do this.
 # see: http://stackoverflow.com/questions/10117073/how-to-use-initializer-to-set-up-my-multiprocess-pool
 conn_s3_global = None
@@ -264,7 +265,7 @@ def set_global_conns():
 
 
 def handle_feed_s3(args):
-    keys = args[0]  #zzz todo: there's got to be a better way to handle this
+    keys, out_bucket_name = args
 
     pid = os.getpid()
 
@@ -273,24 +274,21 @@ def handle_feed_s3(args):
 
     key_name_posts = "posts/" + str(uuid.uuid4())
     key_name_links = "links/" + str(uuid.uuid4())
-    post_count, link_count = feed_chunk.write_s3(conn_s3_global, S3_OUT_BUCKET_NAME, key_name_posts, key_name_links)
-
-    #(post_upload.si((key_name_posts,) | move_s3_file.s(S3_OUT_BUCKET_NAME, key_name_posts, S3_DONE_DIR)).apply_async()
-    #(post_user_upload.si((key_name_links,) | move_s3_file.s(S3_OUT_BUCKET_NAME, key_name_links, S3_DONE_DIR)).apply_async()
+    post_count, link_count = feed_chunk.write_s3(conn_s3_global, out_bucket_name, key_name_posts, key_name_links)
 
     return (post_count, link_count)
 
 
-def process_feeds(worker_count, overwrite):
+def process_feeds(worker_count, overwrite, out_bucket_name, in_bucket_names):
 
     conn_s3 = get_conn_s3()
-    create_s3_bucket(conn_s3, S3_OUT_BUCKET_NAME, overwrite)
+    create_s3_bucket(conn_s3, out_bucket_name, overwrite)
     conn_s3.close()
 
     logger.info("process %d farming out to %d childs" % (os.getpid(), worker_count))
     pool = multiprocessing.Pool(processes=worker_count, initializer=set_global_conns)
 
-    feed_arg_iter = imap(None, s3_key_iter())
+    feed_arg_iter = imap(None, s3_key_iter(in_bucket_names), repeat(out_bucket_name))
     post_line_count_tot = 0
     link_line_count_tot = 0
 
@@ -319,7 +317,8 @@ def process_feeds(worker_count, overwrite):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Eat up the FB sync data and put it into a tsv')
-    # parser.add_argument('out_dir', type=str, help='base dir for output files')
+    parser.add_argument('--out_bucket', type=str, help='base dir for output files', nargs='?', default=S3_OUT_BUCKET_NAME)
+    parser.add_argument('--in_buckets', type=str, help='buckets that hold input files', nargs='*', default=S3_IN_BUCKET_NAMES)
     parser.add_argument('--workers', type=int, help='number of workers to multiprocess', default=1)
     parser.add_argument('--overwrite', action='store_true', help='overwrite previous runs')
     parser.add_argument('--logfile', type=str, help='for debugging', default=None)
@@ -337,7 +336,7 @@ if __name__ == '__main__':
         logger.addHandler(hand_f)
     logger.addHandler(hand_s)
 
-    process_feeds(args.workers, args.overwrite)
+    process_feeds(args.workers, args.overwrite, args.out_bucket, args.in_buckets)
 
 
 #zzz todo: do something more intelligent with \n and \t in text

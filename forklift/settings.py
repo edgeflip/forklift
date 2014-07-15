@@ -102,4 +102,3 @@ VISIT_SLUG = 'visit'
 FRIEND_SLUG = 'friend_fbid'
 MISC_SLUG = 'misc'
 
-S3_OUT_BUCKET_NAME = "redshift_transfer_tristan"
