@@ -1,12 +1,9 @@
 #!/usr/bin/python
-import sys
 import os
-import json
 import logging
 from boto.s3.connection import S3Connection
 from boto.s3.key import Key
 from urlparse import urlparse
-import tempfile
 import argparse
 import multiprocessing
 from itertools import imap, repeat
@@ -134,7 +131,7 @@ def handle_feed_s3(args):
         *key_names
     )
 
-    return (feed_chunk.post_count, feed_chunk.link_count, feed_chunk.like_count)
+    return (feed_chunk.num_posts, feed_chunk.num_links, feed_chunk.num_likes)
 
 
 def process_feeds(worker_count, overwrite, out_bucket_name, in_bucket_names):

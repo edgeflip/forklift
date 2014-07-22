@@ -1,8 +1,13 @@
 import logging
 import forklift.db.utils as dbutils
 import datetime
-from urlparse import urlparse
 from collections import defaultdict
+import json
+import logging
+import tempfile
+from urlparse import urlparse
+
+logger = logging.getLogger(__name__)
 
 DB_TEXT_LEN = 4096
 UNIQUE_POST_ID_TABLE = 'fbid_post_ids'
