@@ -18,18 +18,14 @@ import itertools
 import httplib
 import socket
 
-sys.path.append(os.path.abspath(os.curdir))
-from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
-#from forklift.tasks import post_upload, post_user_upload, move_s3_file
+from forklift.s3.utils import get_conn_s3, create_s3_bucket
+from forklift.loaders.fbsync import FeedPostFromJson, FeedFromS3
 
 
 S3_OUT_BUCKET_NAME = "redshift_transfer_tristan"
-S3_IN_BUCKET_NAMES = [ "user_feeds_%d" % i for i in range(5) ]
-S3_DONE_DIR = "loaded"
-DB_TEXT_LEN = 4096
+S3_IN_BUCKET_NAMES = [ "user_feeds_%d" % i for i in range(5) ] + ["feed_crawler_%d" % i for i in range(5) ]
 FEEDS_PER_FILE = 100    # optimal filesize is between 1MB and 1GB
                         # this is a rough guesstimate that should get us there
-
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -37,9 +33,6 @@ logger.propagate = False
 
 
 # S3 stuff
-
-def get_conn_s3(key=AWS_ACCESS_KEY, sec=AWS_SECRET_KEY):
-    return S3Connection(key, sec)
 
 def s3_key_iter(bucket_names):
     conn_s3 = get_conn_s3()
@@ -60,130 +53,31 @@ def s3_key_iter(bucket_names):
             yield feed_batch
     conn_s3.close()
 
-def delete_s3_bucket(conn_s3, bucket_name):
-    buck = conn_s3.get_bucket(bucket_name)
-    for key in buck.list():
-        key.delete()
-    conn_s3.delete_bucket(bucket_name)
-
-
-def create_s3_bucket(conn_s3, bucket_name, overwrite=False):
-    if conn_s3.lookup(bucket_name) is not None:
-        if overwrite:
-            logger.debug("deleting old S3 bucket " + bucket_name)
-            delete_s3_bucket(conn_s3, bucket_name)
-        else:
-            logger.debug("keeping old S3 bucket " + bucket_name)
-            return None
-    logger.debug("creating S3 bucket " + bucket_name)
-    return conn_s3.create_bucket(bucket_name)
-
 
 # data structs for transforming json to db rows
-
-class FeedFromS3(object):
-    """Holds an entire feed from a single user crawl"""
-
-    def __init__(self, key):
-        prim_id, fbid = key.name.split("_")
-
-        feed_json = None
-        with tempfile.TemporaryFile() as fp:
-            key.get_contents_to_file(fp)
-            fp.seek(0)
-            feed_json = json.load(fp)
-        try:
-            feed_json_list = feed_json['data']
-        except KeyError:
-            logger.debug("no data in feed %s" % key.name)
-            logger.debug(str(feed_json))
-            raise
-        logger.debug("\tread feed json with %d posts from %s" % (len(feed_json_list), key.name))
-
-        self.user_id = fbid
-        self.posts = []
-        while feed_json_list:
-            post_json = feed_json_list.pop()
-            try:
-                self.posts.append(FeedPostFromJson(post_json))
-            except StandardError:
-                logger.debug("error parsing: " + str(post_json))
-                logger.debug("full feed: " + str(feed_json_list))
-                raise
-
-    def transform_field(self, field, delim):
-        if isinstance(field, basestring):
-            return field.replace(delim, " ").replace("\n", " ").replace("\x00", "").encode('utf8', 'ignore')
-        else:
-            return str(field)
-
-
-    def get_post_lines(self, delim="\t"):
-        post_lines = []
-        for post in self.posts:
-            post_fields = (
-                self.user_id,
-                post.post_id,
-                post.post_ts,
-                post.post_type,
-                post.post_app,
-                post.post_from,
-                post.post_link,
-                post.post_link_domain,
-                post.post_story,
-                post.post_description,
-                post.post_caption,
-                post.post_message,
-                len(post.like_ids) if hasattr(post, 'like_ids') else 0,
-                len(post.comment_ids) if hasattr(post, 'comment_ids') else 0,
-                len(post.to_ids) if hasattr(post, 'to_ids') else 0,
-                len(set(post.comment_ids)) if hasattr(post, 'comments_ids') else 0,
-            )
-            post_lines.append(delim.join(self.transform_field(field, delim) for field in post_fields))
-        return post_lines
-
-    def get_link_lines(self, delim="\t"):
-        link_lines = []
-        for p in self.posts:
-            user_ids = None
-            if hasattr(p, 'to_ids'):
-                user_ids = p.to_ids
-            if hasattr(p, 'like_ids'):
-                if user_ids:
-                    user_ids = user_ids.union(p.like_ids)
-                else:
-                    user_ids = p.like_ids
-            if hasattr(p, 'comment_ids'):
-                if user_ids:
-                    user_ids = user_ids.union(p.comment_ids)
-                else:
-                    user_ids = p.comment_ids
-            if user_ids:
-                for user_id in user_ids:
-                    has_to = "1" if hasattr(p, 'to_ids') and user_id in p.to_ids else ""
-                    has_like = "1" if hasattr(p, 'like_ids') and user_id in p.like_ids else ""
-                    has_comm = "1" if hasattr(p, 'comment_ids') and user_id in p.comment_ids else ""
-                    link_fields = (p.post_id, user_id, has_to, has_like, has_comm)
-                    link_lines.append(delim.join(f.encode('utf8', 'ignore') for f in link_fields))
-        return link_lines
 
 
 class FeedChunk(object):
     def __init__(self, keys):
         self.num_posts = 0
         self.num_links = 0
+        self.num_likes = 0
         self.post_string = ""
         self.link_string = ""
+        self.like_string = ""
         for key in keys:
             for attempt in range(3):
                 try:
                     feed = FeedFromS3(key)
                     post_lines = feed.get_post_lines()
                     link_lines = feed.get_link_lines()
+                    like_lines = feed.get_like_lines()
                     self.post_string += "\n".join(post_lines) + "\n"
                     self.link_string += "\n".join(link_lines) + "\n"
+                    self.like_string += "\n".join(like_lines) + "\n"
                     self.num_posts += len(post_lines)
                     self.num_links += len(link_lines)
+                    self.num_likes += len(like_lines)
                     break
                 except (httplib.IncompleteRead, socket.error):
                     pass
@@ -192,67 +86,25 @@ class FeedChunk(object):
 
 
     def write_posts(self, bucket, key_name, delim):
-        key_posts = Key(bucket)
-        key_posts.key = key_name
-        key_posts.set_contents_from_string(self.post_string + "\n")
-        key_posts.close()
-        return self.num_posts
-
+        self.write_stuff(bucket, key_name, self.post_string)
 
     def write_links(self, bucket, key_name, delim):
-        key_links = Key(bucket)
-        key_links.key = key_name
-        key_links.set_contents_from_string(self.link_string + "\n")
-        key_links.close()
-        return self.num_links
+        self.write_stuff(bucket, key_name, self.link_string)
 
+    def write_likes(self, bucket, key_name, delim):
+        self.write_stuff(bucket, key_name, self.like_string)
 
-    def write_s3(self, conn_s3, bucket_name, key_name_posts, key_name_links, delim="\t"):
+    def write_stuff(self, bucket, key_name, string):
+        key = Key(bucket)
+        key.key = key_name
+        key.set_contents_from_string(string + "\n")
+        key.close()
+
+    def write_s3(self, conn_s3, bucket_name, key_name_posts, key_name_links, key_name_likes, delim="\t"):
         bucket = conn_s3.get_bucket(bucket_name)
-        num_posts = self.write_posts(bucket, key_name_posts, delim)
-        num_links = self.write_links(bucket, key_name_links, delim)
-
-        return num_posts, num_links
-
-
-# Despite what the docs say, datetime.strptime() format doesn't like %z
-# see: http://stackoverflow.com/questions/526406/python-time-to-age-part-2-timezones/526450#526450
-def parse_ts(time_string):
-    tz_offset_hours = int(time_string[-5:]) / 100  # we're ignoring the possibility of minutes here
-    tz_delt = datetime.timedelta(hours=tz_offset_hours)
-    return datetime.datetime.strptime(time_string[:-5], "%Y-%m-%dT%H:%M:%S") - tz_delt
-
-class FeedPostFromJson(object):
-    """Each post contributes a single post line, and multiple user-post lines to the db"""
-
-    def __init__(self, post_json):
-        self.post_id = str(post_json['id'])
-        # self.post_ts = post_json['updated_time']
-        self.post_ts = parse_ts(post_json['updated_time']).strftime("%Y-%m-%d %H:%M:%S")
-        self.post_type = post_json['type']
-        self.post_app = post_json['application']['id'] if 'application' in post_json else ""
-
-        self.post_from = post_json['from']['id'] if 'from' in post_json else ""
-        self.post_link = post_json.get('link', "")
-        try:
-            self.post_link_domain = urlparse(self.post_link).hostname if (self.post_link) else ""
-        except ValueError: # handling invalid Ipv6 address errors
-            self.post_link_domain = ""
-
-        self.post_story = post_json.get('story', "")
-        self.post_description = post_json.get('description', "")
-        self.post_caption = post_json.get('caption', "")
-        self.post_message = post_json.get('message', "")
-
-        if 'to' in post_json and 'data' in post_json['to']:
-            self.to_ids = set()
-            self.to_ids.update([user['id'] for user in post_json['to']['data']])
-        if 'likes' in post_json and 'data' in post_json['likes']:
-            self.like_ids = set()
-            self.like_ids.update([user['id'] for user in post_json['likes']['data']])
-        if 'comments' in post_json and 'data' in post_json['comments']:
-            self.comment_ids = set()
-            self.comment_ids.update([user['id'] for user in post_json['comments']['data']])
+        self.write_posts(bucket, key_name_posts, delim)
+        self.write_links(bucket, key_name_links, delim)
+        self.write_likes(bucket, key_name_likes, delim)
 
 
 # Each worker gets its own S3 connection, manage that with a global variable.  There's prob
@@ -264,6 +116,9 @@ def set_global_conns():
     conn_s3_global = get_conn_s3()
 
 
+def key_name(prefix):
+    return prefix + "/" + str(uuid.uuid4())
+
 def handle_feed_s3(args):
     keys, out_bucket_name = args
 
@@ -271,12 +126,15 @@ def handle_feed_s3(args):
 
     # name should have format primary_secondary; e.g., "100000008531200_1000760833"
     feed_chunk = FeedChunk(keys)
+    key_names = key_name(prefix) for prefix in "posts", "links", "likes"
 
-    key_name_posts = "posts/" + str(uuid.uuid4())
-    key_name_links = "links/" + str(uuid.uuid4())
-    post_count, link_count = feed_chunk.write_s3(conn_s3_global, out_bucket_name, key_name_posts, key_name_links)
+    feed_chunk.write_s3(
+        conn_s3_global,
+        out_bucket_name,
+        *key_names
+    )
 
-    return (post_count, link_count)
+    return (feed_chunk.post_count, feed_chunk.link_count, feed_chunk.like_count)
 
 
 def process_feeds(worker_count, overwrite, out_bucket_name, in_bucket_names):
@@ -291,18 +149,20 @@ def process_feeds(worker_count, overwrite, out_bucket_name, in_bucket_names):
     feed_arg_iter = imap(None, s3_key_iter(in_bucket_names), repeat(out_bucket_name))
     post_line_count_tot = 0
     link_line_count_tot = 0
+    like_line_count_tot = 0
 
     time_start = time.time()
     for i, counts_tup in enumerate(pool.imap_unordered(handle_feed_s3, feed_arg_iter)):
         if i % 1000 == 0:
             time_delt = datetime.timedelta(seconds=int(time.time()-time_start))
-            logger.info("\t%s %d feed chunks of size %s, %d posts, %d links" % (str(time_delt), i, FEEDS_PER_FILE, post_line_count_tot, link_line_count_tot))
+            logger.info("\t%s %d feed chunks of size %s, %d posts, %d links, %d likes" % (str(time_delt), i, FEEDS_PER_FILE, post_line_count_tot, link_line_count_tot, like_line_count_tot))
         if counts_tup is None:
             continue
         else:
-            post_lines, link_lines = counts_tup
+            post_lines, link_lines, like_lines = counts_tup
             post_line_count_tot += post_lines
             link_line_count_tot += link_lines
+            like_line_count_tot += like_lines
 
     #zzz todo: deal with unloaded partial batches of feeds still stuck in S3
 
