@@ -2,12 +2,13 @@ from boto.s3.connection import S3Connection
 from boto.s3.key import Key
 import logging
 
-from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
+from forklift.settings import AWS_ACCESS_KEY_ID, AWS_SECRET_KEY_ID
 
 logger = logging.getLogger(__name__)
 
 
-def get_conn_s3(key=AWS_ACCESS_KEY, sec=AWS_SECRET_KEY):
+
+def get_conn_s3(key=AWS_ACCESS_KEY_ID, sec=AWS_SECRET_KEY_ID):
     return S3Connection(key, sec)
 
 
