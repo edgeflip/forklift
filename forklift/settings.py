@@ -33,9 +33,6 @@ CELERY_QUEUES = (
     Queue('ip_hourly', routing_key='hourly.ip', queue_arguments=QUEUE_ARGS),
     Queue('visit_hourly', routing_key='hourly.visit', queue_arguments=QUEUE_ARGS),
     Queue('misc_hourly', routing_key='hourly.misc', queue_arguments=QUEUE_ARGS),
-    Queue('post_upload', routing_key='upload.post', queue_arguments=QUEUE_ARGS),
-    Queue('post_user_upload', routing_key='upload.post_user', queue_arguments=QUEUE_ARGS),
-    Queue('move_s3_file', routing_key='move.s3_file', queue_arguments=QUEUE_ARGS),
 )
 
 CELERY_ROUTES = {
@@ -44,9 +41,6 @@ CELERY_ROUTES = {
     'forklift.tasks.ip_load_hour': {'queue': 'ip_hourly', 'routing_key': 'hourly.ip'},
     'forklift.tasks.visit_load_hour': {'queue': 'visit_hourly', 'routing_key': 'hourly.visit'},
     'forklift.tasks.misc_load_hour': {'queue': 'misc_hourly', 'routing_key': 'hourly.misc'},
-    'forklift.tasks.post_upload': {'queue': 'post_upload', 'routing_key': 'upload.post'},
-    'forklift.tasks.post_user_upload': {'queue': 'post_user_upload', 'routing_key': 'upload.post_user'},
-    'forklift.tasks.move_s3_file': {'queue': 'move_s3_file', 'routing_key': 'move.s3_file'},
 }
 
 LOGGING = {

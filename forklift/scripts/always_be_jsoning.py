@@ -1,6 +1,5 @@
 #!/usr/bin/python
 import os
-import os
 import logging
 from boto.s3.connection import S3Connection
 from boto.s3.key import Key
@@ -124,7 +123,7 @@ def handle_feed_s3(args):
 
     # name should have format primary_secondary; e.g., "100000008531200_1000760833"
     feed_chunk = FeedChunk(keys)
-    key_names = key_name(prefix) for prefix in "posts", "links", "likes"
+    key_names = (key_name(prefix) for prefix in ("posts", "links", "likes"))
 
     feed_chunk.write_s3(
         conn_s3_global,

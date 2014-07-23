@@ -7,7 +7,6 @@ from forklift.settings import AWS_ACCESS_KEY_ID, AWS_SECRET_KEY_ID
 logger = logging.getLogger(__name__)
 
 
-
 def get_conn_s3(key=AWS_ACCESS_KEY_ID, sec=AWS_SECRET_KEY_ID):
     return S3Connection(key, sec)
 
