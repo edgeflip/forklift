@@ -1,17 +1,13 @@
-import logging
-import forklift.db.utils as dbutils
 import datetime
 from collections import defaultdict
+import forklift.db.utils as dbutils
 import json
 import logging
 import tempfile
 from urlparse import urlparse
 
-logger = logging.getLogger(__name__)
-
 DB_TEXT_LEN = 4096
 UNIQUE_POST_ID_TABLE = 'fbid_post_ids'
-BUCKET_NAME = 'redshift_transfer_tristan'
 POSTS_TABLE = 'posts'
 USER_POSTS_TABLE = 'user_posts'
 
@@ -45,17 +41,24 @@ def create_sql(table_name):
                 story VARCHAR({text_len}),
                 description VARCHAR({text_len}),
                 caption VARCHAR({text_len}),
-                message VARCHAR({text_len})
+                message VARCHAR({text_len}),
+                num_likes INT,
+                num_comments INT,
+                num_shares INT,
+                num_users_commented INT
             )
         """.format(table=table_name, text_len=DB_TEXT_LEN)
     elif table_name == raw_table_name(USER_POSTS_TABLE) or table_name == raw_table_name(incremental_table_name(USER_POSTS_TABLE)):
         return """
             CREATE TABLE {table} (
-                fbid_user VARCHAR(64) NOT NULL,
+                fbid_user BIGINT NOT NULL,
                 fbid_post VARCHAR(64) NOT NULL,
+                fbid_poster BIGINT NOT NULL,
                 user_to BOOLEAN,
                 user_like BOOLEAN,
-                user_comment BOOLEAN
+                user_comment BOOLEAN,
+                num_user_comments INT,
+                comment_text VARCHAR({text_len})
             )
         """.format(table=table_name)
     else:
@@ -96,7 +99,11 @@ def dedupe_sql(base_table_name):
                 max(story) as story,
                 max(description) as description,
                 max(caption) as caption,
-                max(message) as message
+                max(message) as message,
+                max(num_likes) as num_likes,
+                max(num_comments) as num_comments,
+                max(num_shares) as num_shares,
+                max(num_users_commented) as num_users_commented
             from {raw_table}
             group by fbid_post
         """
@@ -106,9 +113,12 @@ def dedupe_sql(base_table_name):
             select
                 fbid_post,
                 max(fbid_user) as fbid_user,
+                max(fbid_poster) as fbid_poster,
                 bool_or(user_to) as user_to,
                 bool_or(user_like) as user_like,
-                bool_or(user_comment) as user_comment
+                bool_or(user_comment) as user_comment,
+                max(num_comments) as num_comments,
+                max(comment_text) as comment_text
             from {raw_table}
             group by fbid_post
         """
