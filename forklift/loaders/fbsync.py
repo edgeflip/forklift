@@ -10,6 +10,8 @@ DB_TEXT_LEN = 4096
 UNIQUE_POST_ID_TABLE = 'fbid_post_ids'
 POSTS_TABLE = 'posts'
 USER_POSTS_TABLE = 'user_posts'
+TOP_WORDS_COUNT = 20
+DEFAULT_DELIMITER = "\t"
 
 logger = logging.getLogger(__name__)
 
@@ -309,14 +311,29 @@ class FeedFromS3(object):
         if 'likes' in feed_json:
             self.page_likes = feed_json['likes']
 
+    def top_k_word_line(self, vectorizer, k=TOP_WORDS_COUNT, delim=DEFAULT_DELIMITER):
+        tfidf = vectorizer.transform([self.post_corpus])[0].toarray()
+        top_k = tfidf.argsort()[0][::-1][:k]
+        feature_names = vectorizer.get_feature_names()
+        return delim.join(
+            self.user_id,
+            " ".join(feature_names[y].encode('utf8', 'ignore') for y in top_k)
+        )
+
     def transform_field(self, field, delim):
         if isinstance(field, basestring):
             return field.replace(delim, " ").replace("\n", " ").replace("\x00", "").encode('utf8', 'ignore')
         else:
             return str(field)
 
+    @property
+    def post_corpus(self):
+        corpus = ""
+        for post in self.posts:
+            corpus += post.message + " "
+        return corpus
 
-    def get_post_lines(self, delim="\t"):
+    def get_post_lines(self, delim=DEFAULT_DELIMITER):
         post_lines = []
         for post in self.posts:
             post_fields = (
@@ -340,7 +357,7 @@ class FeedFromS3(object):
             post_lines.append(delim.join(self.transform_field(field, delim) for field in post_fields))
         return post_lines
 
-    def get_link_lines(self, delim="\t"):
+    def get_link_lines(self, delim=DEFAULT_DELIMITER):
         link_lines = []
         for p in self.posts:
             user_ids = None
@@ -377,7 +394,7 @@ class FeedFromS3(object):
         return link_lines
 
 
-    def get_like_lines(self, delim="\t"):
+    def get_like_lines(self, delim=DEFAULT_DELIMITER):
         if not hasattr(self, 'page_likes'):
             return ()
         return (

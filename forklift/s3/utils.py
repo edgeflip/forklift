@@ -33,3 +33,18 @@ def create_s3_bucket(conn_s3, bucket_name, overwrite=False):
     logger.debug("creating S3 bucket " + bucket_name)
     return conn_s3.create_bucket(bucket_name)
 
+
+def stream_files_from(bucket_names):
+    conn_s3 = get_conn_s3()
+    for b, bucket_name in enumerate(bucket_names):
+        logger.debug("reading bucket %d/%d (%s)" % (b, len(bucket_names), bucket_name))
+        keys = conn_s3.get_bucket(bucket_name).list()
+        for key in keys:
+            yield key
+    conn_s3.close()
+
+def write_string_to_key(bucket, key_name, string):
+    key = Key(bucket)
+    key.key = key_name
+    key.set_contents_from_string(string + "\n")
+    key.close()
