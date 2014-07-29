@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 def get_conn_s3(key=AWS_ACCESS_KEY_ID, sec=AWS_SECRET_KEY_ID):
     return S3Connection(key, sec)
 
-
 def move_file(bucket_name, key_name, new_directory):
     buck = get_conn_s3().get_bucket(bucket_name)
     buck.copy_key(os.path.join(new_directory, key_name), bucket_name, key_name)
@@ -32,7 +31,6 @@ def create_s3_bucket(conn_s3, bucket_name, overwrite=False):
             return None
     logger.debug("creating S3 bucket " + bucket_name)
     return conn_s3.create_bucket(bucket_name)
-
 
 def stream_files_from(bucket_names):
     conn_s3 = get_conn_s3()

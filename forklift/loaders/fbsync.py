@@ -53,16 +53,16 @@ def create_sql(table_name):
     elif table_name == raw_table_name(USER_POSTS_TABLE) or table_name == raw_table_name(incremental_table_name(USER_POSTS_TABLE)):
         return """
             CREATE TABLE {table} (
-                fbid_user BIGINT NOT NULL,
                 fbid_post VARCHAR(64) NOT NULL,
+                fbid_user BIGINT NOT NULL,
                 fbid_poster BIGINT NOT NULL,
                 user_to BOOLEAN,
                 user_like BOOLEAN,
                 user_comment BOOLEAN,
-                num_user_comments INT,
+                num_comments INT,
                 comment_text VARCHAR({text_len})
             )
-        """.format(table=table_name)
+        """.format(table=table_name, text_len=DB_TEXT_LEN)
     else:
         raise ValueError('Table {} not recognized'.format(table_name))
 

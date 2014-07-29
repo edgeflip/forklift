@@ -338,6 +338,7 @@ class FBSyncTestCase(ForkliftTestCase):
         create_new_table(table_name, fbsync.raw_table_name(table_name), cls.connection)
         drop_table_if_exists(fbsync.incremental_table_name(table_name), cls.connection)
         create_new_table(fbsync.incremental_table_name(table_name), fbsync.raw_table_name(table_name), cls.connection)
+        create_new_table(fbsync.raw_table_name(fbsync.incremental_table_name(table_name)), table_name, cls.connection)
 
 
     def setUp(self):
@@ -363,8 +364,8 @@ class FBSyncTestCase(ForkliftTestCase):
     def insertDummyUserPost(self, post_id, user_id, table=None):
         table = table or fbsync.raw_table_name(self.user_posts_table)
         self.connection.execute(
-            "insert into {} (fbid_post, fbid_user, user_to) values (%s, %s, %s)".format(table),
-            (post_id, user_id, True)
+            "insert into {} (fbid_post, fbid_user, fbid_poster, user_to) values (%s, %s, %s, %s)".format(table),
+            (post_id, user_id, 90, True)
         )
 
 
