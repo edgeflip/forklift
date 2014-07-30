@@ -59,63 +59,6 @@ def train(in_bucket_names, training_set_size):
     logger.debug("Done fitting.")
     return (vectorizer.vocabulary_, vectorizer.idf_)
 
-# S3 stuff
-
-def s3_key_iter(bucket_names, batch_size):
-    feeds_in_batch = 0
-    feed_batch = []
-    for feed in stream_files_from(bucket_names):
-        if feeds_in_batch < batch_size:
-            feed_batch.append(feed)
-            feeds_in_batch += 1
-        else:
-            feeds_in_batch = 0
-            yield feed_batch
-            feed_batch = []
-    if feeds_in_batch > 0:
-        yield feed_batch
-
-
-# data structs for transforming json to db rows
-
-
-class FeedChunk(object):
-    def __init__(self, keys, vectorizer):
-        self.num_posts = 0
-        self.num_links = 0
-        self.num_likes = 0
-        self.post_string = ""
-        self.link_string = ""
-        self.like_string = ""
-        for key in keys:
-            for attempt in range(3):
-                try:
-                    feed = FeedFromS3(key)
-                    post_lines = feed.get_post_lines()
-                    link_lines = feed.get_link_lines()
-                    like_lines = feed.get_like_lines()
-                    top_k_word_line = feed.top_k_word_line(vectorizer)
-                    self.post_string += "\n".join(post_lines) + "\n"
-                    self.link_string += "\n".join(link_lines) + "\n"
-                    self.like_string += "\n".join(like_lines) + "\n"
-                    self.word_string += top_k_word_line + "\n"
-                    self.num_posts += len(post_lines)
-                    self.num_links += len(link_lines)
-                    self.num_likes += len(like_lines)
-                    break
-                except (httplib.IncompleteRead, socket.error):
-                    pass
-                except KeyError:
-                    break
-
-    def write_s3(self, conn_s3, bucket_name, key_name_posts, key_name_links, key_name_likes):
-        bucket = conn_s3.get_bucket(bucket_name)
-        write_string_to_key(bucket, key_name_posts, self.post_string)
-        write_string_to_key(bucket, key_name_links, self.link_string)
-        write_string_to_key(bucket, key_name_likes, self.like_string)
-        write_string_to_key(bucket, key_name_words, self.word_string)
-
-
 # Each worker gets its own S3 connection, manage that with a global variable.  There's prob
 # a better way to do this.
 # see: http://stackoverflow.com/questions/10117073/how-to-use-initializer-to-set-up-my-multiprocess-pool
@@ -141,7 +84,10 @@ def handle_feed_s3(args):
     pid = os.getpid()
 
     # name should have format primary_secondary; e.g., "100000008531200_1000760833"
-    feed_chunk = FeedChunk(keys, vectorizer)
+    feed_chunk = FeedChunk(vectorizer)
+    for key in keys:
+        feed_chunk.add_feed_from_key(key)
+
     key_names = (key_name(prefix) for prefix in ("posts", "links", "likes", "words"))
 
     feed_chunk.write_s3(
@@ -153,14 +99,16 @@ def handle_feed_s3(args):
     return (feed_chunk.num_posts, feed_chunk.num_links, feed_chunk.num_likes)
 
 
-def process_feeds(worker_count, overwrite, out_bucket_name, in_bucket_names, vectorizer_params):
+def process_feeds(worker_count, overwrite, out_bucket_name, in_bucket_names, training_set_size):
+
+    vectorizer_parameters = train(in_bucket_names, training_set_size)
 
     conn_s3 = get_conn_s3()
     create_s3_bucket(conn_s3, out_bucket_name, overwrite)
     conn_s3.close()
 
     logger.info("process %d farming out to %d childs" % (os.getpid(), worker_count))
-    pool = multiprocessing.Pool(processes=worker_count, initializer=worker_setup, initargs=vectorizer_params)
+    pool = multiprocessing.Pool(processes=worker_count, initializer=worker_setup, initargs=vectorizer_parameters)
 
     feed_arg_iter = imap(None, s3_key_iter(in_bucket_names, FEEDS_PER_FILE), repeat(out_bucket_name))
     post_line_count_tot = 0
@@ -212,8 +160,7 @@ if __name__ == '__main__':
         logger.addHandler(hand_f)
     logger.addHandler(hand_s)
 
-    vectorizer_parameters = train(args.in_buckets, args.training_set_size)
-    process_feeds(args.workers, args.overwrite, args.out_bucket, args.in_buckets, vectorizer_parameters)
+    process_feeds(args.workers, args.overwrite, args.out_bucket, args.in_buckets, args.training_set_size)
 
 
 #zzz todo: do something more intelligent with \n and \t in text

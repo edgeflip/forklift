@@ -4,7 +4,10 @@ import forklift.db.utils as dbutils
 import json
 import logging
 import tempfile
+import time
 from urlparse import urlparse
+
+from forklift.s3.utils import write_string_to_key
 
 DB_TEXT_LEN = 4096
 UNIQUE_POST_ID_TABLE = 'fbid_post_ids'
@@ -12,6 +15,12 @@ POSTS_TABLE = 'posts'
 USER_POSTS_TABLE = 'user_posts'
 TOP_WORDS_COUNT = 20
 DEFAULT_DELIMITER = "\t"
+POSTS = 'posts'
+LINKS = 'links'
+LIKES = 'likes'
+TOP_WORDS = 'top_words'
+ENTITIES = (POSTS, LINKS, LIKES, TOP_WORDS)
+
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +290,7 @@ class FeedFromS3(object):
     """Holds an entire feed from a single user crawl"""
 
     def __init__(self, key):
+        self.initialize()
         prim_id, fbid = key.name.split("_")
 
         feed_json = None
@@ -311,14 +321,14 @@ class FeedFromS3(object):
         if 'likes' in feed_json:
             self.page_likes = feed_json['likes']
 
-    def top_k_word_line(self, vectorizer, k=TOP_WORDS_COUNT, delim=DEFAULT_DELIMITER):
-        tfidf = vectorizer.transform([self.post_corpus])[0].toarray()
-        top_k = tfidf.argsort()[0][::-1][:k]
-        feature_names = vectorizer.get_feature_names()
-        return delim.join(
-            self.user_id,
-            " ".join(feature_names[y].encode('utf8', 'ignore') for y in top_k)
-        )
+    def initialize(self):
+        self.output_formatter = {
+            POSTS: self.post_lines,
+            LINKS: self.link_lines,
+            LIKES: self.like_lines,
+            TOP_WORDS: self.top_word_lines,
+        }
+
 
     def transform_field(self, field, delim):
         if isinstance(field, basestring):
@@ -330,10 +340,10 @@ class FeedFromS3(object):
     def post_corpus(self):
         corpus = ""
         for post in self.posts:
-            corpus += post.message + " "
+            corpus += post.post_message + " "
         return corpus
 
-    def get_post_lines(self, delim=DEFAULT_DELIMITER):
+    def post_lines(self, delim):
         post_lines = []
         for post in self.posts:
             post_fields = (
@@ -357,7 +367,7 @@ class FeedFromS3(object):
             post_lines.append(delim.join(self.transform_field(field, delim) for field in post_fields))
         return post_lines
 
-    def get_link_lines(self, delim=DEFAULT_DELIMITER):
+    def link_lines(self, delim):
         link_lines = []
         for p in self.posts:
             user_ids = None
@@ -394,11 +404,61 @@ class FeedFromS3(object):
         return link_lines
 
 
-    def get_like_lines(self, delim=DEFAULT_DELIMITER):
+    def like_lines(self, delim):
         if not hasattr(self, 'page_likes'):
             return ()
         return (
             delim.join(str(f) for f in (self.user_id, like))
             for like in self.page_likes
         )
+
+    def top_word_lines(self, delim, vectorizer, k=TOP_WORDS_COUNT):
+        tfidf = vectorizer.transform([self.post_corpus])[0].toarray()
+        top_k = tfidf.argsort()[0][::-1][:k]
+        feature_names = vectorizer.get_feature_names()
+        return [delim.join((
+            self.user_id,
+            " ".join(feature_names[y].encode('utf8', 'ignore') for y in top_k)
+        ))]
+
+
+    def get_output_lines(self, entity, delim=DEFAULT_DELIMITER, **kwargs):
+        formatter = self.output_formatter[entity]
+        if entity == TOP_WORDS:
+            return formatter(delim, kwargs.pop('vectorizer'))
+        else:
+            return formatter(delim)
+
+
+
+class FeedChunk(object):
+    def __init__(self, vectorizer):
+        self.counts = defaultdict(int)
+        self.strings = defaultdict(str)
+        self.vectorizer = vectorizer
+
+    def add_feed_from_key(self, key):
+        for attempt in range(3):
+            try:
+                feed = FeedFromS3(key)
+                break
+            except (httplib.IncompleteRead, socket.error):
+                time.sleep(1)
+                pass
+            except KeyError:
+                break
+            else:
+                self.merge_feed(feed)
+
+    def merge_feed(self, feed):
+        for entity in ENTITIES:
+            lines = feed.get_output_lines(entity, vectorizer=self.vectorizer)
+            self.strings[entity] += "\n".join(lines) + "\n"
+            self.counts[entity] += len(lines)
+
+    def write_s3(self, conn_s3, bucket_name, key_names):
+        bucket = conn_s3.get_bucket(bucket_name)
+        for entity in ENTITIES:
+            write_string_to_key(bucket, key_names[entity], self.strings[entity])
+
 

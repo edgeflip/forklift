@@ -32,6 +32,20 @@ def create_s3_bucket(conn_s3, bucket_name, overwrite=False):
     logger.debug("creating S3 bucket " + bucket_name)
     return conn_s3.create_bucket(bucket_name)
 
+def stream_batched_files_from(bucket_names, batch_size):
+    feeds_in_batch = 0
+    feed_batch = []
+    for feed in stream_files_from(bucket_names):
+        if feeds_in_batch < batch_size:
+            feed_batch.append(feed)
+            feeds_in_batch += 1
+        else:
+            feeds_in_batch = 0
+            yield feed_batch
+            feed_batch = []
+    if feeds_in_batch > 0:
+        yield feed_batch
+
 def stream_files_from(bucket_names):
     conn_s3 = get_conn_s3()
     for b, bucket_name in enumerate(bucket_names):
@@ -46,3 +60,4 @@ def write_string_to_key(bucket, key_name, string):
     key.key = key_name
     key.set_contents_from_string(string + "\n")
     key.close()
+
