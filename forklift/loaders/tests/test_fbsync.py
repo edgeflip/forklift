@@ -38,11 +38,11 @@ class FBSyncTestCase(ForkliftTestCase):
         self.assertEquals(self.post.post_message, self.message)
 
     def test_FeedFromS3_post_lines(self):
-        lines = self.feed.post_lines(DEFAULT_DELIMITER)
+        lines = list(self.feed.post_lines(DEFAULT_DELIMITER))
         self.assertEquals(len(lines), 1)
-        fields = lines[0].split("\t")
+        fields = lines[0]
         self.assertEqual(fields,
-            [
+            (
                 self.primary,
                 self.post_id,
                 '2014-04-20 14:48:57',
@@ -59,14 +59,14 @@ class FBSyncTestCase(ForkliftTestCase):
                 '3', # num comments
                 '0', # num 'to's
                 '2', # num commenters
-            ]
+            )
         )
 
 
     def test_FeedFromS3_link_lines(self):
         lines = self.feed.link_lines(DEFAULT_DELIMITER)
         for line in lines:
-            (post_id, user_id, poster_id, has_to, has_like, has_comm, num_comm, _) = line.split("\t")
+            (post_id, user_id, poster_id, has_to, has_like, has_comm, num_comm, _) = line
             self.assertEquals(post_id, self.post_id)
             self.assertEquals(poster_id, self.primary)
             if user_id == self.primary:
@@ -93,11 +93,15 @@ class FBSyncTestCase(ForkliftTestCase):
 
         self.feed.page_likes = (1, 5)
         lines = list(self.feed.like_lines(DEFAULT_DELIMITER))
+        x = self.feed.like_lines(DEFAULT_DELIMITER)
+        print x
+        lines = list(x)
+        print lines
         self.assertEquals(
             lines,
             [
-                "{}\t1".format(self.primary),
-                "{}\t5".format(self.primary)
+                (self.primary, "1"),
+                (self.primary, "5"),
             ]
         )
 
@@ -112,7 +116,7 @@ class FBSyncTestCase(ForkliftTestCase):
         # The only word which shows up more than once in our sample message is 'the'.
         vectorizer.fit([self.message])
         lines = self.feed.top_word_lines(DEFAULT_DELIMITER, vectorizer, k=1)
-        user_id, word = lines[0].split(DEFAULT_DELIMITER)
+        user_id, word = lines[0]
         self.assertEquals(user_id, self.primary)
         self.assertEquals(word, "the")
 
@@ -120,7 +124,7 @@ class FBSyncTestCase(ForkliftTestCase):
         # knows 'the' is a very popular word and force it to re-weight
         vectorizer.fit([self.message, "the", "the", "the", "the", "the"])
         lines = self.feed.top_word_lines(DEFAULT_DELIMITER, vectorizer, k=1)
-        _, word = lines[0].split(DEFAULT_DELIMITER)
+        _, word = lines[0]
         self.assertNotEquals(word, "the")
 
     def test_FeedChunk_merge_feed(self):

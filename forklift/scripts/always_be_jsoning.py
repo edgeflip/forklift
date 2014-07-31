@@ -18,8 +18,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from scipy.sparse import spdiags
 import nltk
 
-from forklift.s3.utils import get_conn_s3, create_s3_bucket, stream_files_from, write_string_to_key
-from forklift.loaders.fbsync import FeedPostFromJson, FeedFromS3
+from forklift.s3.utils import get_conn_s3, create_s3_bucket, stream_batched_files_from, stream_files_from, write_string_to_key
+from forklift.loaders.fbsync import FeedPostFromJson, FeedFromS3, FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS
 
 
 S3_OUT_BUCKET_NAME = "redshift_transfer_tristan"
@@ -47,9 +47,10 @@ def create_vectorizer(**extra_kwargs):
     )
 
 def training_feeds(in_bucket_names, training_set_size):
-    for i, feed in enumerate(stream_files_from(in_bucket_names)):
+    for i, key in enumerate(stream_files_from(in_bucket_names)):
         if i > training_set_size:
             return
+        feed = FeedFromS3(key)
         yield feed.post_corpus
 
 def train(in_bucket_names, training_set_size):
@@ -64,12 +65,11 @@ def train(in_bucket_names, training_set_size):
 # see: http://stackoverflow.com/questions/10117073/how-to-use-initializer-to-set-up-my-multiprocess-pool
 conn_s3_global = None
 vectorizer = None
-def worker_setup(vectorizer_args):
+def worker_setup(vocab, idf):
     global conn_s3_global
     conn_s3_global = get_conn_s3()
 
     global vectorizer
-    (vocab, idf) = vectorizer_args
     vectorizer = create_vectorizer(vocabulary=vocab)
     n_features = idf.shape[0]
     vectorizer._tfidf._idf_diag = spdiags(idf, diags=0, m=n_features, n=n_features)
@@ -88,12 +88,17 @@ def handle_feed_s3(args):
     for key in keys:
         feed_chunk.add_feed_from_key(key)
 
-    key_names = (key_name(prefix) for prefix in ("posts", "links", "likes", "words"))
+    key_names = {
+        POSTS: key_name("posts"),
+        LINKS: key_name("links"),
+        LIKES: key_name("likes"),
+        TOP_WORDS: key_name("top_words"),
+    }
 
     feed_chunk.write_s3(
         conn_s3_global,
         out_bucket_name,
-        *key_names
+        key_names
     )
 
     return (feed_chunk.num_posts, feed_chunk.num_links, feed_chunk.num_likes)
@@ -108,9 +113,9 @@ def process_feeds(worker_count, overwrite, out_bucket_name, in_bucket_names, tra
     conn_s3.close()
 
     logger.info("process %d farming out to %d childs" % (os.getpid(), worker_count))
-    pool = multiprocessing.Pool(processes=worker_count, initializer=worker_setup, initargs=vectorizer_parameters)
+    pool = multiprocessing.Pool(processes=worker_count, initializer=worker_setup, initargs=list(vectorizer_parameters))
 
-    feed_arg_iter = imap(None, s3_key_iter(in_bucket_names, FEEDS_PER_FILE), repeat(out_bucket_name))
+    feed_arg_iter = imap(None, stream_batched_files_from(in_bucket_names, FEEDS_PER_FILE), repeat(out_bucket_name))
     post_line_count_tot = 0
     link_line_count_tot = 0
     like_line_count_tot = 0
@@ -128,11 +133,7 @@ def process_feeds(worker_count, overwrite, out_bucket_name, in_bucket_names, tra
             link_line_count_tot += link_lines
             like_line_count_tot += like_lines
 
-    #zzz todo: deal with unloaded partial batches of feeds still stuck in S3
-
-
     pool.terminate()
-    return i
 
 
 ###################################

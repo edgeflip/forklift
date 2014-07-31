@@ -1,10 +1,14 @@
 import datetime
 from collections import defaultdict
+from cStringIO import StringIO
 import forklift.db.utils as dbutils
+import httplib
 import json
 import logging
+import socket
 import tempfile
 import time
+import unicodecsv
 from urlparse import urlparse
 
 from forklift.s3.utils import write_string_to_key
@@ -364,7 +368,7 @@ class FeedFromS3(object):
                 len(post.to_ids) if hasattr(post, 'to_ids') else 0,
                 len(post.commenters) if hasattr(post, 'commenters') else 0,
             )
-            post_lines.append(delim.join(self.transform_field(field, delim) for field in post_fields))
+            post_lines.append(tuple(self.transform_field(field, delim) for field in post_fields))
         return post_lines
 
     def link_lines(self, delim):
@@ -400,7 +404,7 @@ class FeedFromS3(object):
                         num_comments = "0"
 
                     link_fields = (p.post_id, user_id, self.user_id, has_to, has_like, has_comm, num_comments, comment_text)
-                    link_lines.append(delim.join(f.encode('utf8', 'ignore') for f in link_fields))
+                    link_lines.append(f.encode('utf8', 'ignore') for f in link_fields)
         return link_lines
 
 
@@ -408,7 +412,7 @@ class FeedFromS3(object):
         if not hasattr(self, 'page_likes'):
             return ()
         return (
-            delim.join(str(f) for f in (self.user_id, like))
+            tuple(str(f) for f in (self.user_id, like))
             for like in self.page_likes
         )
 
@@ -416,10 +420,10 @@ class FeedFromS3(object):
         tfidf = vectorizer.transform([self.post_corpus])[0].toarray()
         top_k = tfidf.argsort()[0][::-1][:k]
         feature_names = vectorizer.get_feature_names()
-        return [delim.join((
+        return [(
             self.user_id,
-            " ".join(feature_names[y].encode('utf8', 'ignore') for y in top_k)
-        ))]
+            " ".join(self.transform_field(feature_names[y], delim) for y in top_k),
+        )]
 
 
     def get_output_lines(self, entity, delim=DEFAULT_DELIMITER, **kwargs):
@@ -433,11 +437,17 @@ class FeedFromS3(object):
 
 class FeedChunk(object):
     def __init__(self, vectorizer):
-        self.counts = defaultdict(int)
-        self.strings = defaultdict(str)
+        self.counts = dict()
+        self.strings = dict()
+        self.writers = dict()
         self.vectorizer = vectorizer
+        for entity in ENTITIES:
+            self.counts[entity] = 0
+            self.strings[entity] = StringIO()
+            self.writers[entity] = unicodecsv.writer(self.strings[entity], encoding='utf-8', delimiter="\t")
 
     def add_feed_from_key(self, key):
+        feed = None
         for attempt in range(3):
             try:
                 feed = FeedFromS3(key)
@@ -447,18 +457,19 @@ class FeedChunk(object):
                 pass
             except KeyError:
                 break
-            else:
-                self.merge_feed(feed)
+        if feed is not None:
+            self.merge_feed(feed)
 
     def merge_feed(self, feed):
         for entity in ENTITIES:
             lines = feed.get_output_lines(entity, vectorizer=self.vectorizer)
-            self.strings[entity] += "\n".join(lines) + "\n"
+            for line in lines:
+                self.writers[entity].writerow(line)
             self.counts[entity] += len(lines)
 
     def write_s3(self, conn_s3, bucket_name, key_names):
         bucket = conn_s3.get_bucket(bucket_name)
         for entity in ENTITIES:
-            write_string_to_key(bucket, key_names[entity], self.strings[entity])
+            write_string_to_key(bucket, key_names[entity], self.strings[entity].getvalue())
 
 

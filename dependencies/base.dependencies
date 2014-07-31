@@ -6,6 +6,6 @@ python-setuptools
 python-numpy
 python-scipy
 libatlas-dev
-libatlas3-base
+libatlas-base-dev
 liblapack-dev
 gfortran
