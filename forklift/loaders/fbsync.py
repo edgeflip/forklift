@@ -17,6 +17,8 @@ DB_TEXT_LEN = 4096
 UNIQUE_POST_ID_TABLE = 'fbid_post_ids'
 POSTS_TABLE = 'posts'
 USER_POSTS_TABLE = 'user_posts'
+LIKES_TABLE = 'page_likes'
+TOP_WORDS_TABLE = 'top_words'
 TOP_WORDS_COUNT = 20
 DEFAULT_DELIMITER = "\t"
 POSTS = 'posts'
@@ -76,6 +78,20 @@ def create_sql(table_name):
                 comment_text VARCHAR({text_len})
             )
         """.format(table=table_name, text_len=DB_TEXT_LEN)
+    elif table_name == raw_table_name(LIKES_TABLE) or table_name == raw_table_name(incremental_table_name(LIKES_TABLE)):
+        return """
+            CREATE TABLE {table} (
+                fbid_user BIGINT NOT NULL,
+                page_id BIGINT NOT NULL
+            )
+        """.format(table=table_name)
+    elif table_name == raw_table_name(TOP_WORDS_TABLE):
+        return """
+            CREATE TABLE {table} (
+                fbid_user BIGINT NOT NULL,
+                top_words VARCHAR(4096) NOT NULL
+            )
+        """.format(table=table_name)
     else:
         raise ValueError('Table {} not recognized'.format(table_name))
 
@@ -137,20 +153,34 @@ def dedupe_sql(base_table_name):
             from {raw_table}
             group by fbid_post
         """
+    elif base_table_name == LIKES_TABLE or base_table_name == incremental_table_name(LIKES_TABLE):
+        return """
+            create table {new_table} as
+            select
+                fbid_user,
+                page_id
+            from {raw_table}
+            group by
+                fbid_user,
+                page_id
+        """
     else:
         raise ValueError('Table {} not recognized'.format(base_table_name))
 
 
 # when FBSync just grabbed some new data and we want to merge it in
-def add_new_data(bucket_name, posts_folder, user_posts_folder, connection):
+def add_new_data(bucket_name, posts_folder, user_posts_folder, likes_folder, top_words_folder, connection):
     posts_incremental = incremental_table_name(POSTS_TABLE)
     user_posts_incremental = incremental_table_name(USER_POSTS_TABLE)
+    likes_incremental = incremental_table_name(LIKES_TABLE)
 
     load_and_dedupe(bucket_name, posts_folder, posts_incremental, connection)
     load_and_dedupe(bucket_name, user_posts_folder, user_posts_incremental, connection)
+    load_and_dedupe(bucket_name, likes_folder, likes_incremental, connection)
 
     merge_posts(posts_incremental, POSTS_TABLE, connection)
     merge_user_posts(user_posts_incremental, USER_POSTS_TABLE, connection)
+    merge_likes(likes_incremental, LIKES_TABLE, connection)
 
 
 def load_and_dedupe(bucket_name, source_folder, table_name, connection, optimize=False):
@@ -236,6 +266,42 @@ def merge_user_posts(incremental_table, final_table, connection):
             SELECT {incremental_table}.*
             FROM {temp_table}
             JOIN {incremental_table} using (fbid_post, fbid_user)
+        """.format(
+            final_table=final_table,
+            incremental_table=incremental_table,
+            temp_table=temp_table,
+        ))
+
+    dbutils.optimize(final_table, connection)
+
+def merge_likes(incremental_table, final_table, connection):
+    with connection.begin():
+        temp_table = incremental_table + '_unique'
+        dbutils.drop_table_if_exists(temp_table, connection)
+        logger.info(
+            'Populating list of new page likes from %s compared with %s',
+            incremental_table, final_table
+        )
+        connection.execute("""
+            CREATE TEMPORARY TABLE {temp_table} AS
+            SELECT distinct fbid, page_id
+            FROM {incremental_table}
+            LEFT JOIN {final_table} USING (fbid, page_id)
+            WHERE {final_table}.fbid is NULL
+        """.format(
+            temp_table=temp_table,
+            incremental_table=incremental_table,
+            final_table=final_table
+        ))
+
+        logger.info('%s new page_likes found', dbutils.get_rowcount(temp_table, connection))
+
+        # insert new versions into final table
+        logger.info('Inserting new rows from %s into %s', incremental_table, final_table)
+        connection.execute("""
+            INSERT INTO {final_table} (fbid, page_id)
+            SELECT fbid, page_id
+            FROM {temp_table}
         """.format(
             final_table=final_table,
             incremental_table=incremental_table,
@@ -404,7 +470,7 @@ class FeedFromS3(object):
                         num_comments = "0"
 
                     link_fields = (p.post_id, user_id, self.user_id, has_to, has_like, has_comm, num_comments, comment_text)
-                    link_lines.append(f.encode('utf8', 'ignore') for f in link_fields)
+                    link_lines.append(self.transform_field(f, delim) for f in link_fields)
         return link_lines
 
 
