@@ -1,9 +1,6 @@
 #!/usr/bin/python
 import os
 import logging
-from boto.s3.connection import S3Connection
-from boto.s3.key import Key
-from urlparse import urlparse
 import argparse
 import multiprocessing
 from itertools import imap, repeat
@@ -11,15 +8,12 @@ import os.path
 import time
 import datetime
 import uuid
-import itertools
-import httplib
-import socket
 from sklearn.feature_extraction.text import TfidfVectorizer
 from scipy.sparse import spdiags
 import nltk
 
 from forklift.s3.utils import get_conn_s3, create_s3_bucket, stream_batched_files_from, stream_files_from, write_string_to_key
-from forklift.loaders.fbsync import FeedPostFromJson, FeedFromS3, FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS
+from forklift.loaders.fbsync import FeedFromS3, FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS
 
 
 S3_OUT_BUCKET_NAME = "redshift_transfer_tristan"
@@ -50,8 +44,11 @@ def training_feeds(in_bucket_names, training_set_size):
     for i, key in enumerate(stream_files_from(in_bucket_names)):
         if i > training_set_size:
             return
-        feed = FeedFromS3(key)
-        yield feed.post_corpus
+        try:
+            feed = FeedFromS3(key)
+            yield feed.post_corpus
+        except KeyError:
+            logger.info("Skipping data-less key %s", key)
 
 def train(in_bucket_names, training_set_size):
     vectorizer = create_vectorizer()
@@ -101,7 +98,7 @@ def handle_feed_s3(args):
         key_names
     )
 
-    return (feed_chunk.num_posts, feed_chunk.num_links, feed_chunk.num_likes)
+    return (feed_chunk.counts[POSTS], feed_chunk.counts[LINKS], feed_chunk.counts[LIKES])
 
 
 def process_feeds(worker_count, overwrite, out_bucket_name, in_bucket_names, training_set_size):

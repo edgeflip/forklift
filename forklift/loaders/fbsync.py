@@ -557,7 +557,7 @@ class FeedFromS3(object):
     def like_lines(self, delim):
         if not hasattr(self, 'page_likes'):
             return ()
-        return (
+        return tuple(
             tuple(str(f) for f in (self.user_id, like))
             for like in self.page_likes
         )
@@ -568,7 +568,7 @@ class FeedFromS3(object):
         feature_names = vectorizer.get_feature_names()
         return [(
             self.user_id,
-            " ".join(self.transform_field(feature_names[y], delim) for y in top_k),
+            " ".join(self.transform_field(feature_names[y], delim) for y in top_k if tfidf[0][y] > 0.0),
         )]
 
 
