@@ -325,6 +325,11 @@ class FBSyncTestCase(ForkliftTestCase):
         cls.user_posts_incremental_table = fbsync.incremental_table_name(cls.user_posts_table)
         cls.create_tables(cls.user_posts_table)
 
+        cls.page_likes_table = fbsync.LIKES_TABLE
+        cls.page_likes_raw_table = fbsync.raw_table_name(cls.page_likes_table)
+        cls.page_likes_incremental_table = fbsync.incremental_table_name(cls.page_likes_table)
+        cls.create_tables(cls.page_likes_table)
+
         # insert some common data that most of the tests will use (a post with a dupe)
         cls.insertDummyPost(cls.posts_raw_table)
         cls.insertDummyPost(cls.posts_raw_table)
@@ -457,7 +462,7 @@ class FBSyncTestCase(ForkliftTestCase):
         load_mock.side_effect = fake_load_from_s3
 
         # 3. the s3 arguments don't really matter here
-        fbsync.add_new_data('stuff', 'stuff', 'stuff', self.connection)
+        fbsync.add_new_data('stuff', 'stuff', 'stuff', 'stuff', 'stuff', self.connection)
 
         # 4. verify both tables received correct data
         self.assertEqual(2, get_rowcount(self.posts_table, self.connection))

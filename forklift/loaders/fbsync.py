@@ -44,7 +44,10 @@ def old_table_name(table_base):
 
 
 def create_sql(table_name):
-    if table_name == raw_table_name(POSTS_TABLE) or table_name == raw_table_name(incremental_table_name(POSTS_TABLE)):
+    if(
+        table_name == raw_table_name(POSTS_TABLE) or
+        table_name == raw_table_name(incremental_table_name(POSTS_TABLE))
+    ):
         return """
             CREATE TABLE {table} (
                 fbid_user BIGINT NOT NULL,
@@ -65,7 +68,10 @@ def create_sql(table_name):
                 num_users_commented INT
             )
         """.format(table=table_name, text_len=DB_TEXT_LEN)
-    elif table_name == raw_table_name(USER_POSTS_TABLE) or table_name == raw_table_name(incremental_table_name(USER_POSTS_TABLE)):
+    elif (
+        table_name == raw_table_name(USER_POSTS_TABLE) or
+        table_name == raw_table_name(incremental_table_name(USER_POSTS_TABLE))
+    ):
         return """
             CREATE TABLE {table} (
                 fbid_post VARCHAR(64) NOT NULL,
@@ -78,7 +84,10 @@ def create_sql(table_name):
                 comment_text VARCHAR({text_len})
             )
         """.format(table=table_name, text_len=DB_TEXT_LEN)
-    elif table_name == raw_table_name(LIKES_TABLE) or table_name == raw_table_name(incremental_table_name(LIKES_TABLE)):
+    elif (
+        table_name == raw_table_name(LIKES_TABLE) or
+        table_name == raw_table_name(incremental_table_name(LIKES_TABLE))
+    ):
         return """
             CREATE TABLE {table} (
                 fbid_user BIGINT NOT NULL,
@@ -103,9 +112,16 @@ def dedupe(table_with_dupes, final_table_name, connection):
         new_table=deduped_table_name,
         raw_table=table_with_dupes
     )
-    logger.info('Deduping records from %s into staging table %s', table_with_dupes, deduped_table_name)
+    logger.info(
+        'Deduping records from %s into staging table %s',
+        table_with_dupes,
+        deduped_table_name
+    )
     connection.execute(sql)
-    logger.info('%s records after deduping', dbutils.get_rowcount(deduped_table_name, connection))
+    logger.info(
+        '%s records after deduping',
+        dbutils.get_rowcount(deduped_table_name, connection)
+    )
     dbutils.deploy_table(
         final_table_name,
         deduped_table_name,
@@ -115,7 +131,10 @@ def dedupe(table_with_dupes, final_table_name, connection):
 
 
 def dedupe_sql(base_table_name):
-    if base_table_name == POSTS_TABLE or base_table_name == incremental_table_name(POSTS_TABLE):
+    if (
+        base_table_name == POSTS_TABLE or
+        base_table_name == incremental_table_name(POSTS_TABLE)
+    ):
         return """
             create table {new_table} as
             select
@@ -138,7 +157,10 @@ def dedupe_sql(base_table_name):
             from {raw_table}
             group by fbid_post
         """
-    elif base_table_name == USER_POSTS_TABLE or base_table_name == incremental_table_name(USER_POSTS_TABLE):
+    elif (
+        base_table_name == USER_POSTS_TABLE or
+        base_table_name == incremental_table_name(USER_POSTS_TABLE)
+    ):
         return """
             create table {new_table} as
             select
@@ -153,7 +175,10 @@ def dedupe_sql(base_table_name):
             from {raw_table}
             group by fbid_post
         """
-    elif base_table_name == LIKES_TABLE or base_table_name == incremental_table_name(LIKES_TABLE):
+    elif (
+        base_table_name == LIKES_TABLE or
+        base_table_name == incremental_table_name(LIKES_TABLE)
+    ):
         return """
             create table {new_table} as
             select
@@ -185,7 +210,12 @@ def add_new_data(bucket_name, posts_folder, user_posts_folder, likes_folder, top
 
 def load_and_dedupe(bucket_name, source_folder, table_name, connection, optimize=False):
     raw_table = raw_table_name(table_name)
-    logger.info('Loading raw data into %s from s3://%s/%s', raw_table, bucket_name, source_folder)
+    logger.info(
+        'Loading raw data into %s from s3://%s/%s',
+        raw_table,
+        bucket_name,
+        source_folder
+    )
     dbutils.load_from_s3(
         connection,
         bucket_name,
@@ -193,7 +223,11 @@ def load_and_dedupe(bucket_name, source_folder, table_name, connection, optimize
         raw_table,
         create_statement=create_sql(raw_table)
     )
-    logger.info('%s rows loaded into %s', dbutils.get_rowcount(raw_table, connection), raw_table)
+    logger.info(
+        '%s rows loaded into %s',
+        dbutils.get_rowcount(raw_table, connection),
+        raw_table
+    )
     dedupe(raw_table, table_name, connection)
     if optimize:
         logger.info('Optimizing table %s', table_name)
@@ -207,7 +241,11 @@ def merge_posts(incremental_table, final_table, connection):
         temp_table = incremental_table + '_unique'
         # populate list of new post ids
         dbutils.drop_table_if_exists(temp_table, connection)
-        logger.info('Populating list of new post ids from %s compared with records in %s', incremental_table, final_table)
+        logger.info(
+            'Populating list of new post ids from %s compared with records in %s',
+            incremental_table,
+            final_table
+        )
         connection.execute("""
             CREATE TEMPORARY TABLE {temp_table} AS
             SELECT distinct(fbid_post) fbid_post
@@ -220,10 +258,17 @@ def merge_posts(incremental_table, final_table, connection):
             final_table=final_table
         ))
 
-        logger.info('%s new posts found', dbutils.get_rowcount(temp_table, connection))
+        logger.info(
+            '%s new posts found',
+            dbutils.get_rowcount(temp_table, connection)
+        )
 
         # insert new versions into final table
-        logger.info('Inserting new rows from %s into %s', incremental_table, final_table)
+        logger.info(
+            'Inserting new rows from %s into %s',
+            incremental_table,
+            final_table
+        )
         connection.execute("""
             INSERT INTO {final_table}
             SELECT {incremental_table}.*
@@ -244,7 +289,11 @@ def merge_user_posts(incremental_table, final_table, connection):
         temp_table = incremental_table + '_unique'
         # populate list of new post ids
         dbutils.drop_table_if_exists(temp_table, connection)
-        logger.info('Populating list of new post ids from %s compared with records in %s', incremental_table, final_table)
+        logger.info(
+            'Populating list of new post ids from %s compared with records in %s',
+            incremental_table,
+            final_table
+        )
         connection.execute("""
             CREATE TEMPORARY TABLE {temp_table} AS
             SELECT distinct fbid_post, fbid_user
@@ -257,10 +306,17 @@ def merge_user_posts(incremental_table, final_table, connection):
             final_table=final_table
         ))
 
-        logger.info('%s new user_posts found', dbutils.get_rowcount(temp_table, connection))
+        logger.info(
+            '%s new user_posts found',
+            dbutils.get_rowcount(temp_table, connection)
+        )
 
         # insert new versions into final table
-        logger.info('Inserting new rows from %s into %s', incremental_table, final_table)
+        logger.info(
+            'Inserting new rows from %s into %s',
+            incremental_table,
+            final_table
+        )
         connection.execute("""
             INSERT INTO {final_table}
             SELECT {incremental_table}.*
@@ -284,23 +340,30 @@ def merge_likes(incremental_table, final_table, connection):
         )
         connection.execute("""
             CREATE TEMPORARY TABLE {temp_table} AS
-            SELECT distinct fbid, page_id
+            SELECT distinct fbid_user, page_id
             FROM {incremental_table}
-            LEFT JOIN {final_table} USING (fbid, page_id)
-            WHERE {final_table}.fbid is NULL
+            LEFT JOIN {final_table} USING (fbid_user, page_id)
+            WHERE {final_table}.fbid_user is NULL
         """.format(
             temp_table=temp_table,
             incremental_table=incremental_table,
             final_table=final_table
         ))
 
-        logger.info('%s new page_likes found', dbutils.get_rowcount(temp_table, connection))
+        logger.info(
+            '%s new page_likes found',
+            dbutils.get_rowcount(temp_table, connection)
+        )
 
         # insert new versions into final table
-        logger.info('Inserting new rows from %s into %s', incremental_table, final_table)
+        logger.info(
+            'Inserting new rows from %s into %s',
+            incremental_table,
+            final_table
+        )
         connection.execute("""
-            INSERT INTO {final_table} (fbid, page_id)
-            SELECT fbid, page_id
+            INSERT INTO {final_table} (fbid_user, page_id)
+            SELECT fbid_user, page_id
             FROM {temp_table}
         """.format(
             final_table=final_table,
@@ -375,7 +438,11 @@ class FeedFromS3(object):
             logger.debug(str(feed_json))
             raise
 
-        logger.debug("\tread feed json with %d posts from %s" % (len(feed_json_list), key.name))
+        logger.debug(
+            "\tread feed json with %d posts from %s",
+            len(feed_json_list),
+            key.name
+        )
 
         self.user_id = fbid
         self.posts = []
@@ -434,14 +501,15 @@ class FeedFromS3(object):
                 len(post.to_ids) if hasattr(post, 'to_ids') else 0,
                 len(post.commenters) if hasattr(post, 'commenters') else 0,
             )
-            post_lines.append(tuple(self.transform_field(field, delim) for field in post_fields))
+            post_lines.append(
+                tuple(self.transform_field(field, delim) for field in post_fields)
+            )
         return post_lines
 
     def link_lines(self, delim):
         link_lines = []
         for p in self.posts:
             user_ids = None
-            comment_ids = None
             if hasattr(p, 'to_ids'):
                 user_ids = p.to_ids
             if hasattr(p, 'like_ids'):
@@ -461,7 +529,8 @@ class FeedFromS3(object):
                     has_like = "1" if hasattr(p, 'like_ids') and user_id in p.like_ids else ""
                     if hasattr(p, 'commenters') and user_id in commenter_ids:
                         has_comm = "1"
-                        # we're doing bag of words so separating comments more granularly than this shouldn't matter
+                        # we're doing bag of words so separating comments
+                        # more granularly than this shouldn't matter
                         comment_text = " ".join(p.commenters[user_id])
                         num_comments = str(len(p.commenters[user_id]))
                     else:
@@ -469,8 +538,19 @@ class FeedFromS3(object):
                         comment_text = ""
                         num_comments = "0"
 
-                    link_fields = (p.post_id, user_id, self.user_id, has_to, has_like, has_comm, num_comments, comment_text)
-                    link_lines.append(self.transform_field(f, delim) for f in link_fields)
+                    link_fields = (
+                        p.post_id,
+                        user_id,
+                        self.user_id,
+                        has_to,
+                        has_like,
+                        has_comm,
+                        num_comments,
+                        comment_text
+                    )
+                    link_lines.append(
+                        self.transform_field(f, delim) for f in link_fields
+                    )
         return link_lines
 
 
@@ -510,7 +590,11 @@ class FeedChunk(object):
         for entity in ENTITIES:
             self.counts[entity] = 0
             self.strings[entity] = StringIO()
-            self.writers[entity] = unicodecsv.writer(self.strings[entity], encoding='utf-8', delimiter="\t")
+            self.writers[entity] = unicodecsv.writer(
+                self.strings[entity],
+                encoding='utf-8',
+                delimiter="\t"
+            )
 
     def add_feed_from_key(self, key):
         feed = None
@@ -536,6 +620,9 @@ class FeedChunk(object):
     def write_s3(self, conn_s3, bucket_name, key_names):
         bucket = conn_s3.get_bucket(bucket_name)
         for entity in ENTITIES:
-            write_string_to_key(bucket, key_names[entity], self.strings[entity].getvalue())
-
+            write_string_to_key(
+                bucket,
+                key_names[entity],
+                self.strings[entity].getvalue()
+            )
 
