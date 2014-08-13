@@ -6,6 +6,7 @@ import httplib
 import json
 import logging
 import socket
+import ssl
 import tempfile
 import time
 import unicodecsv
@@ -428,7 +429,14 @@ class FeedFromS3(object):
 
         feed_json = None
         with tempfile.TemporaryFile() as fp:
-            key.get_contents_to_file(fp)
+            max_retries = 3
+            retries = 0
+            while retries < max_retries:
+                try:
+                    key.get_contents_to_file(fp)
+                    break
+                except ssl.SSLError:
+                    retries += 1
             fp.seek(0)
             feed_json = json.load(fp)
         try:
