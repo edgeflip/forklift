@@ -98,7 +98,7 @@ def create_sql(table_name):
     elif table_name == raw_table_name(TOP_WORDS_TABLE):
         return """
             CREATE TABLE {table} (
-                fbid_user BIGINT NOT NULL,
+                fbid BIGINT NOT NULL,
                 top_words VARCHAR(4096) NOT NULL
             )
         """.format(table=table_name)
@@ -190,37 +190,51 @@ def dedupe_sql(base_table_name):
                 fbid_user,
                 page_id
         """
+    elif (
+        base_table_name == TOP_WORDS_TABLE or
+        base_table_name == incremental_table_name(TOP_WORDS_TABLE)
+    ):
+        return """
+            create table {new_table} as
+            select fbid, max(top_words)
+            from {raw_table}
+            group by fbid
+        """
     else:
         raise ValueError('Table {} not recognized'.format(base_table_name))
 
 
 # when FBSync just grabbed some new data and we want to merge it in
-def add_new_data(bucket_name, posts_folder, user_posts_folder, likes_folder, top_words_folder, connection):
+def add_new_data(bucket_name, prefix, posts_folder, user_posts_folder, likes_folder, top_words_folder, connection):
     posts_incremental = incremental_table_name(POSTS_TABLE)
     user_posts_incremental = incremental_table_name(USER_POSTS_TABLE)
     likes_incremental = incremental_table_name(LIKES_TABLE)
+    top_words_incremental = incremental_table_name(TOP_WORDS_TABLE)
 
-    load_and_dedupe(bucket_name, posts_folder, posts_incremental, connection)
-    load_and_dedupe(bucket_name, user_posts_folder, user_posts_incremental, connection)
-    load_and_dedupe(bucket_name, likes_folder, likes_incremental, connection)
+    load_and_dedupe(bucket_name, prefix, posts_folder, posts_incremental, connection)
+    load_and_dedupe(bucket_name, prefix, user_posts_folder, user_posts_incremental, connection)
+    load_and_dedupe(bucket_name, prefix, likes_folder, likes_incremental, connection)
+    load_and_dedupe(bucket_name, prefix, top_words_folder, top_words_incremental, connection)
 
     merge_posts(posts_incremental, POSTS_TABLE, connection)
     merge_user_posts(user_posts_incremental, USER_POSTS_TABLE, connection)
     merge_likes(likes_incremental, LIKES_TABLE, connection)
+    merge_top_words(top_words_incremental, TOP_WORDS_TABLE, connection)
 
 
-def load_and_dedupe(bucket_name, source_folder, table_name, connection, optimize=False):
+def load_and_dedupe(bucket_name, prefix, source_folder, table_name, connection, optimize=False):
     raw_table = raw_table_name(table_name)
+    path = '{}/{}'.format(prefix, source_folder)
     logger.info(
         'Loading raw data into %s from s3://%s/%s',
         raw_table,
         bucket_name,
-        source_folder
+        path
     )
     dbutils.load_from_s3(
         connection,
         bucket_name,
-        source_folder,
+        path,
         raw_table,
         create_statement=create_sql(raw_table)
     )
@@ -365,6 +379,50 @@ def merge_likes(incremental_table, final_table, connection):
         connection.execute("""
             INSERT INTO {final_table} (fbid_user, page_id)
             SELECT fbid_user, page_id
+            FROM {temp_table}
+        """.format(
+            final_table=final_table,
+            incremental_table=incremental_table,
+            temp_table=temp_table,
+        ))
+
+    dbutils.optimize(final_table, connection)
+
+
+def merge_top_words(incremental_table, final_table, connection):
+    with connection.begin():
+        temp_table = incremental_table + '_unique'
+        dbutils.drop_table_if_exists(temp_table, connection)
+        logger.info(
+            'Populating list of new top words from %s compared with %s',
+            incremental_table, final_table
+        )
+        connection.execute("""
+            CREATE TEMPORARY TABLE {temp_table} AS
+            SELECT distinct fbid, top_words
+            FROM {incremental_table}
+            LEFT JOIN {final_table} USING (fbid)
+            WHERE {final_table}.fbid is NULL
+        """.format(
+            temp_table=temp_table,
+            incremental_table=incremental_table,
+            final_table=final_table
+        ))
+
+        logger.info(
+            '%s new top_words found',
+            dbutils.get_rowcount(temp_table, connection)
+        )
+
+        # insert new versions into final table
+        logger.info(
+            'Inserting new rows from %s into %s',
+            incremental_table,
+            final_table
+        )
+        connection.execute("""
+            INSERT INTO {final_table} (fbid, top_words)
+            SELECT fbid, top_words
             FROM {temp_table}
         """.format(
             final_table=final_table,

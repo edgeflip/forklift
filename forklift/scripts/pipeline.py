@@ -1,13 +1,15 @@
 from boto.dynamodb.layer2 import Layer2
 from boto.dynamodb.condition import GE, IN
 from boto.s3.key import Key
-from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS
+from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, add_new_data
+from forklift.db.base import engine
 from forklift.utils import batcher
 from forklift.s3.utils import get_conn_s3
 from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
 from itertools import imap, repeat
 import forklift.nlp.tfidf as tfidf
 import argparse
+from contextlib import closing
 import os
 import time
 import logging
@@ -21,6 +23,10 @@ logger.propagate = False
 BATCH_SIZE = 100
 S3_OUT_BUCKET_NAME = "redshift_transfer_tristan"
 DAYS_BACK = 1
+POSTS_FOLDER = 'posts'
+LINKS_FOLDER = 'links'
+LIKES_FOLDER = 'likes'
+TOP_WORDS_FOLDER = 'top_words'
 
 
 def stream_files_since(timestamp):
@@ -83,10 +89,10 @@ def handle_feed_s3(args):
         feed_chunk.add_feed_from_key(key)
 
     key_names = {
-        POSTS: key_name(version, "posts"),
-        LINKS: key_name(version, "links"),
-        LIKES: key_name(version, "likes"),
-        TOP_WORDS: key_name(version, "top_words"),
+        POSTS: key_name(version, POSTS_FOLDER),
+        LINKS: key_name(version, LINKS_FOLDER),
+        LIKES: key_name(version, LIKES_FOLDER),
+        TOP_WORDS: key_name(version, TOP_WORDS_FOLDER),
     }
 
     feed_chunk.write_s3(
@@ -241,3 +247,14 @@ if __name__ == '__main__':
         args.vectorizer_training_bucket,
         args.training_set_size,
     )
+
+    with closing(engine.connect()) as connection:
+        add_new_data(
+            args.out_bucket,
+            version,
+            POSTS_FOLDER,
+            LINKS_FOLDER,
+            LIKES_FOLDER,
+            TOP_WORDS_FOLDER,
+            connection
+        )
