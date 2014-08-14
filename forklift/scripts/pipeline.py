@@ -4,9 +4,9 @@ from boto.s3.key import Key
 from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS
 from forklift.utils import batcher
 from forklift.s3.utils import get_conn_s3
-from forklift.nlp.tfidf import bootstrap_trained_vectorizer, load_or_train_vectorizer_components, TRAINING_SET_SIZE
 from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
 from itertools import imap, repeat
+import forklift.nlp.tfidf as tfidf
 import argparse
 import os
 import time
@@ -20,9 +20,7 @@ logger.propagate = False
 
 BATCH_SIZE = 100
 S3_OUT_BUCKET_NAME = "redshift_transfer_tristan"
-VECTORIZER_TRAINING_BUCKET = "feed_crawler_0"
-VECTORIZER_DEFAULT_BUCKET = "redshift_transfer_tristan"
-VECTORIZER_DEFAULT_PREFIX = "vectorizer"
+DAYS_BACK = 1
 
 
 def stream_files_since(timestamp):
@@ -65,7 +63,7 @@ def worker_setup(vocab, idf):
     conn_s3_global = get_conn_s3()
 
     global vectorizer
-    vectorizer = bootstrap_trained_vectorizer(vocab, idf)
+    vectorizer = tfidf.bootstrap_trained_vectorizer(vocab, idf)
 
 
 def key_name(version, prefix):
@@ -75,7 +73,7 @@ def key_name(version, prefix):
 def handle_feed_s3(args):
     keys, out_bucket_name = args
 
-    # name should have format primary_secondary; e.g., "100000008531200_1000760833"
+    # name should have format primary_secondary; e.g., "1000000031200_100070833"
     feed_chunk = FeedChunk(vectorizer)
     for bucket_name, primary, secondary in keys:
         key = Key(
@@ -97,20 +95,25 @@ def handle_feed_s3(args):
         key_names
     )
 
-    return (feed_chunk.counts[POSTS], feed_chunk.counts[LINKS], feed_chunk.counts[LIKES])
+    return (
+        feed_chunk.counts[POSTS],
+        feed_chunk.counts[LINKS],
+        feed_chunk.counts[LIKES]
+    )
 
 
 def process_feeds(
     worker_count,
     out_bucket_name,
     version,
+    days_back,
     pretrained_vectorizer_bucket,
     pretrained_vectorizer_prefix,
     vectorizer_training_bucket,
     training_set_size,
 ):
 
-    vocab, idf = load_or_train_vectorizer_components(
+    vocab, idf = tfidf.load_or_train_vectorizer_components(
         get_conn_s3(),
         pretrained_vectorizer_bucket,
         pretrained_vectorizer_prefix,
@@ -128,7 +131,7 @@ def process_feeds(
     )
 
     recent_feeds_batched = batcher(
-        stream_files_since(int(time.time() - (86400*30))),
+        stream_files_since(int(time.time() - (86400*days_back))),
         BATCH_SIZE
     )
     feed_arg_iter = imap(
@@ -155,14 +158,61 @@ def process_feeds(
 
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser(description='Eat up the FB sync data and put it into a tsv')
-    parser.add_argument('--out_bucket', type=str, help='base dir for output files', nargs='?', default=S3_OUT_BUCKET_NAME)
-    parser.add_argument('--pretrained_vectorizer_bucket', type=str, help='s3 bucket housing the pre-trained vectorizer files', nargs='?', default=VECTORIZER_DEFAULT_BUCKET)
-    parser.add_argument('--pretrained_vectorizer_prefix', type=str, help='s3 path prefix, minus the bucket, housing the pre-trained vectorizer files', nargs='?', default=VECTORIZER_DEFAULT_PREFIX)
-    parser.add_argument('--workers', type=int, help='number of workers to multiprocess', default=1)
-    parser.add_argument('--logfile', type=str, help='for debugging', default=None)
-    parser.add_argument('--vectorizer_training_bucket', type=str, help='s3 bucket housing the raw feed files for training the vectorizer', nargs='?', default=VECTORIZER_TRAINING_BUCKET)
-    parser.add_argument('--training_set_size', type=int, help='number of feeds to including in training set', default=TRAINING_SET_SIZE)
+    parser = argparse.ArgumentParser(
+        description='Eat up the FB sync data and put it into a tsv'
+    )
+    parser.add_argument(
+        '--out_bucket',
+        type=str,
+        help='base dir for output files',
+        nargs='?',
+        default=S3_OUT_BUCKET_NAME
+    )
+    parser.add_argument(
+        '--pretrained_vectorizer_bucket',
+        type=str,
+        help='s3 bucket housing the pre-trained vectorizer files',
+        nargs='?',
+        default=tfidf.VECTORIZER_DEFAULT_BUCKET
+    )
+    parser.add_argument(
+        '--pretrained_vectorizer_prefix',
+        type=str,
+        help='s3 path prefix(sans bucket), housing pretrained vectorizer files',
+        nargs='?',
+        default=tfidf.VECTORIZER_DEFAULT_PREFIX
+    )
+    parser.add_argument(
+        '--workers',
+        type=int,
+        help='number of workers to multiprocess',
+        default=1
+    )
+    parser.add_argument(
+        '--logfile',
+        type=str,
+        help='for debugging',
+        default=None
+    )
+    parser.add_argument(
+        '--vectorizer_training_bucket',
+        type=str,
+        help='s3 bucket housing the raw feed files for training the vectorizer',
+        nargs='?',
+        default=tfidf.VECTORIZER_TRAINING_BUCKET
+    )
+    parser.add_argument(
+        '--training_set_size',
+        type=int,
+        help='number of feeds to including in training set',
+        default=tfidf.TRAINING_SET_SIZE
+    )
+    parser.add_argument(
+        '--days_back',
+        type=int,
+        help='# of days back to look for FBSync data',
+        default=DAYS_BACK,
+    )
     args = parser.parse_args()
 
     hand_s = logging.StreamHandler()
@@ -172,7 +222,9 @@ if __name__ == '__main__':
     else:
         hand_s.setLevel(logging.INFO)
         hand_f = logging.FileHandler(args.logfile)
-        hand_f.setFormatter(logging.Formatter('%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s'))
+        hand_f.setFormatter(logging.Formatter(
+            '%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s'
+        ))
         hand_f.setLevel(logging.DEBUG)
         logger.addHandler(hand_f)
     logger.addHandler(hand_s)
@@ -183,6 +235,7 @@ if __name__ == '__main__':
         args.workers,
         args.out_bucket,
         version,
+        args.days_back,
         args.pretrained_vectorizer_bucket,
         args.pretrained_vectorizer_prefix,
         args.vectorizer_training_bucket,

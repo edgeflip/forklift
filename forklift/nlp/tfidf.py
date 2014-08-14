@@ -11,6 +11,9 @@ from forklift.nlp.utils import tokenizer
 VOCAB_FILENAME = 'vocab'
 IDF_FILENAME = 'idf_matrix'
 TRAINING_SET_SIZE = 1000
+VECTORIZER_TRAINING_BUCKET = "feed_crawler_0"
+VECTORIZER_DEFAULT_BUCKET = "redshift_transfer_tristan"
+VECTORIZER_DEFAULT_PREFIX = "vectorizer"
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -34,6 +37,31 @@ def load_or_train_vectorizer_components(
     data_bucket_name,
     training_set_size
 ):
+    vocab_key, idf_key = build_keys(
+        s3_conn,
+        pretrained_bucket_name,
+        prefix
+    )
+
+    if not vocab_key.exists() or not idf_key.exists():
+        train_and_save(
+            vocab_key,
+            idf_key,
+            data_bucket_name,
+            training_set_size
+        )
+
+    vocab = pickle.loads(vocab_key.get_contents_as_string())
+    idf_matrix = pickle.loads(idf_key.get_contents_as_string())
+
+    return (vocab, idf_matrix)
+
+
+def build_keys(
+    s3_conn,
+    pretrained_bucket_name,
+    prefix
+):
     pretrained_bucket = s3_conn.get_bucket(pretrained_bucket_name)
     vocab_key = Key(
         bucket=pretrained_bucket,
@@ -43,16 +71,18 @@ def load_or_train_vectorizer_components(
         bucket=pretrained_bucket,
         name="{}/{}".format(prefix, IDF_FILENAME)
     )
-    if vocab_key.exists() and idf_key.exists():
-        print "it exists!"
-        vocab = pickle.loads(vocab_key.get_contents_as_string())
-        idf_matrix = pickle.loads(idf_key.get_contents_as_string())
-    else:
-        print "uggh lets train it"
-        vocab, idf_matrix = train(data_bucket_name, training_set_size)
-        vocab_key.set_contents_from_string(pickle.dumps(vocab))
-        idf_key.set_contents_from_string(pickle.dumps(idf_matrix))
-    return (vocab, idf_matrix)
+    return (vocab_key, idf_key)
+
+
+def train_and_save(
+    vocab_key,
+    idf_key,
+    data_bucket_name,
+    training_set_size
+):
+    vocab, idf_matrix = train(data_bucket_name, training_set_size)
+    vocab_key.set_contents_from_string(pickle.dumps(vocab))
+    idf_key.set_contents_from_string(pickle.dumps(idf_matrix))
 
 
 def bootstrap_trained_vectorizer(vocab, idf):
