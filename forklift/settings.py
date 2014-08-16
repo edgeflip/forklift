@@ -73,6 +73,9 @@ LOGGING = {
         'grackle': {
             'level': 'DEBUG',
         },
+        '__main__': {
+            'handlers': ['console'],
+        }
     }
 }
 

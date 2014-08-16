@@ -53,7 +53,7 @@ def training_feeds(in_bucket_names, training_set_size):
 def train(in_bucket_names, training_set_size):
     vectorizer = create_vectorizer()
     logger.debug("Fitting training set.")
-    vectorizer.fit(training_feeds(in_bucket_names, training_set_size))
+    vectorizer.fit(training_feeds(['user_feeds_0'], training_set_size))
     logger.debug("Done fitting.")
     return (vectorizer.vocabulary_, vectorizer.idf_)
 

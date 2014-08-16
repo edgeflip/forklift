@@ -10,8 +10,8 @@ from forklift.nlp.utils import tokenizer
 
 VOCAB_FILENAME = 'vocab'
 IDF_FILENAME = 'idf_matrix'
-TRAINING_SET_SIZE = 1000
-VECTORIZER_TRAINING_BUCKET = "feed_crawler_0"
+TRAINING_SET_SIZE = 50000
+VECTORIZER_TRAINING_BUCKET = "user_feeds_0"
 VECTORIZER_DEFAULT_BUCKET = "redshift_transfer_tristan"
 VECTORIZER_DEFAULT_PREFIX = "vectorizer"
 
@@ -101,8 +101,6 @@ def training_feeds(in_bucket_name, training_set_size):
     sampler = S3ReservoirSampler(training_set_size)
     max_retries = 5
     for i, key in enumerate(sampler.sampling_bucket(in_bucket_name)):
-        if i % 1000 == 0:
-            print i
         retries = 0
         while retries < max_retries:
             try:

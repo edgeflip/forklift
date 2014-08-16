@@ -126,6 +126,6 @@ def get_load_errs(connection):
 # http://docs.aws.amazon.com/redshift/latest/dg/r_ANALYZE.html
 # Amazon recommends that you run them both after adding or deleting rows
 # to help query speeds
-def optimize(table, connection):
-    connection.execute("VACUUM {}".format(table))
-    connection.execute("ANALYZE {}".format(table))
+def optimize(table):
+    engine.execute("VACUUM {}".format(table))
+    engine.execute("ANALYZE {}".format(table))

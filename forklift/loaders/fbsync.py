@@ -16,10 +16,13 @@ from forklift.s3.utils import write_string_to_key
 
 DB_TEXT_LEN = 4096
 UNIQUE_POST_ID_TABLE = 'fbid_post_ids'
-POSTS_TABLE = 'posts'
-USER_POSTS_TABLE = 'user_posts'
-LIKES_TABLE = 'page_likes'
-TOP_WORDS_TABLE = 'top_words'
+POSTS_TABLE = 'posts_pipeline_test'
+USER_POSTS_TABLE = 'user_posts_pipeline_test'
+LIKES_TABLE = 'page_likes_pipeline_test'
+TOP_WORDS_TABLE = 'top_words_pipeline_test'
+POST_AGGREGATES_TABLE = 'post_aggregates_pipeline_test'
+INTERACTOR_AGGREGATES_TABLE = 'user_interactor_aggregates_pipeline_test'
+POSTER_AGGREGATES_TABLE = 'user_poster_aggregates_pipeline_test'
 TOP_WORDS_COUNT = 20
 DEFAULT_DELIMITER = "\t"
 POSTS = 'posts'
@@ -91,43 +94,39 @@ def create_sql(table_name):
     ):
         return """
             CREATE TABLE {table} (
-                fbid_user BIGINT NOT NULL,
+                fbid BIGINT NOT NULL,
                 page_id BIGINT NOT NULL
             )
         """.format(table=table_name)
-    elif table_name == raw_table_name(TOP_WORDS_TABLE):
+    elif (
+        table_name == raw_table_name(TOP_WORDS_TABLE) or
+        table_name == raw_table_name(incremental_table_name(TOP_WORDS_TABLE))
+    ):
         return """
             CREATE TABLE {table} (
                 fbid BIGINT NOT NULL,
-                top_words VARCHAR(4096) NOT NULL
+                top_words VARCHAR(4096)
             )
         """.format(table=table_name)
     else:
         raise ValueError('Table {} not recognized'.format(table_name))
 
 
-def dedupe(table_with_dupes, final_table_name, connection):
-    deduped_table_name = "{}_deduped".format(final_table_name)
-    dbutils.drop_table_if_exists(deduped_table_name, connection)
-    sql = dedupe_sql(final_table_name).format(
-        new_table=deduped_table_name,
+def dedupe(table_with_dupes, staging_table_name, connection):
+    sql = dedupe_sql(staging_table_name).format(
+        new_table=staging_table_name,
         raw_table=table_with_dupes
     )
     logger.info(
         'Deduping records from %s into staging table %s',
         table_with_dupes,
-        deduped_table_name
+        staging_table_name
     )
+    logger.info(sql)
     connection.execute(sql)
     logger.info(
         '%s records after deduping',
-        dbutils.get_rowcount(deduped_table_name, connection)
-    )
-    dbutils.deploy_table(
-        final_table_name,
-        deduped_table_name,
-        old_table_name(final_table_name),
-        connection
+        dbutils.get_rowcount(staging_table_name, connection)
     )
 
 
@@ -137,7 +136,7 @@ def dedupe_sql(base_table_name):
         base_table_name == incremental_table_name(POSTS_TABLE)
     ):
         return """
-            create table {new_table} as
+            create temp table {new_table} as
             select
                 max(fbid_user) as fbid_user,
                 fbid_post,
@@ -163,7 +162,7 @@ def dedupe_sql(base_table_name):
         base_table_name == incremental_table_name(USER_POSTS_TABLE)
     ):
         return """
-            create table {new_table} as
+            create temp table {new_table} as
             select
                 fbid_post,
                 max(fbid_user) as fbid_user,
@@ -181,13 +180,13 @@ def dedupe_sql(base_table_name):
         base_table_name == incremental_table_name(LIKES_TABLE)
     ):
         return """
-            create table {new_table} as
+            create temp table {new_table} as
             select
-                fbid_user,
+                fbid,
                 page_id
             from {raw_table}
             group by
-                fbid_user,
+                fbid,
                 page_id
         """
     elif (
@@ -195,7 +194,7 @@ def dedupe_sql(base_table_name):
         base_table_name == incremental_table_name(TOP_WORDS_TABLE)
     ):
         return """
-            create table {new_table} as
+            create temp table {new_table} as
             select fbid, max(top_words)
             from {raw_table}
             group by fbid
@@ -210,19 +209,28 @@ def add_new_data(bucket_name, prefix, posts_folder, user_posts_folder, likes_fol
     user_posts_incremental = incremental_table_name(USER_POSTS_TABLE)
     likes_incremental = incremental_table_name(LIKES_TABLE)
     top_words_incremental = incremental_table_name(TOP_WORDS_TABLE)
+    for inc_table in (
+        posts_incremental,
+        user_posts_incremental,
+        likes_incremental,
+        top_words_incremental
+    ):
+        dbutils.drop_table_if_exists(inc_table, connection)
 
-    load_and_dedupe(bucket_name, prefix, posts_folder, posts_incremental, connection)
-    load_and_dedupe(bucket_name, prefix, user_posts_folder, user_posts_incremental, connection)
-    load_and_dedupe(bucket_name, prefix, likes_folder, likes_incremental, connection)
-    load_and_dedupe(bucket_name, prefix, top_words_folder, top_words_incremental, connection)
+    with connection.begin():
+    	load_and_dedupe(bucket_name, prefix, posts_folder, posts_incremental, connection)
+    	load_and_dedupe(bucket_name, prefix, user_posts_folder, user_posts_incremental, connection)
+    	load_and_dedupe(bucket_name, prefix, likes_folder, likes_incremental, connection)
+    	load_and_dedupe(bucket_name, prefix, top_words_folder, top_words_incremental, connection)
 
     merge_posts(posts_incremental, POSTS_TABLE, connection)
+    merge_post_aggregates(posts_incremental, POSTS_TABLE, POST_AGGREGATES_TABLE, connection)
     merge_user_posts(user_posts_incremental, USER_POSTS_TABLE, connection)
     merge_likes(likes_incremental, LIKES_TABLE, connection)
     merge_top_words(top_words_incremental, TOP_WORDS_TABLE, connection)
 
 
-def load_and_dedupe(bucket_name, prefix, source_folder, table_name, connection, optimize=False):
+def load_and_dedupe(bucket_name, prefix, source_folder, table_name, connection):
     raw_table = raw_table_name(table_name)
     path = '{}/{}'.format(prefix, source_folder)
     logger.info(
@@ -244,10 +252,6 @@ def load_and_dedupe(bucket_name, prefix, source_folder, table_name, connection, 
         raw_table
     )
     dedupe(raw_table, table_name, connection)
-    if optimize:
-        logger.info('Optimizing table %s', table_name)
-        optimize(table_name, connection)
-
 
 
 # take deduped new posts from 'incremental_table' and merge them into 'final_table'
@@ -255,7 +259,6 @@ def merge_posts(incremental_table, final_table, connection):
     with connection.begin():
         temp_table = incremental_table + '_unique'
         # populate list of new post ids
-        dbutils.drop_table_if_exists(temp_table, connection)
         logger.info(
             'Populating list of new post ids from %s compared with records in %s',
             incremental_table,
@@ -295,7 +298,54 @@ def merge_posts(incremental_table, final_table, connection):
             temp_table=temp_table,
         ))
 
-    dbutils.optimize(final_table, connection)
+
+def merge_post_aggregates(posts_incremental_table, posts_full_table, final_aggregate_table, connection):
+    with connection.begin():
+        temp_table = posts_incremental_table + '_updated'
+        # 1. get list of user ids with new data
+        logger.info(
+            'Populating list of users with updated posts from %s',
+            posts_incremental_table
+        )
+        connection.execute("""
+            CREATE TEMPORARY TABLE {temp_table} AS
+            SELECT distinct fbid_user as fbid
+            FROM {incremental_table}
+        """.format(
+            temp_table=temp_table,
+            incremental_table=posts_incremental_table
+        ))
+
+        logger.info(
+            '%s updated users found',
+            dbutils.get_rowcount(temp_table, connection)
+        )
+        # 2. delete from final table with those userids
+        connection.execute("""
+            DELETE
+            FROM {final_table}
+            WHERE fbid in (select distinct fbid from {temp_table})
+        """.format(
+            final_table=final_aggregate_table,
+            temp_table=temp_table
+        ))
+
+        # 3. find posts that are in temp and insert into final
+        connection.execute("""
+            INSERT INTO {final_table}
+            SELECT
+                fbid_user as fbid,
+                date(min(ts)) as first_activity,
+                date(max(ts)) as last_activity,
+                count(distinct case when type = 'status' then fbid_post else null end) as num_stat_upd
+            FROM {temp_table}
+            JOIN {full_table} on ({full_table}.fbid_user = {temp_table}.fbid)
+            GROUP BY 1
+        """.format(
+            final_table=final_aggregate_table,
+            temp_table=temp_table,
+            full_table=posts_full_table
+        ))
 
 
 # take deduped new user_posts from 'incremental_table' and merge them into 'final_table'
@@ -343,8 +393,6 @@ def merge_user_posts(incremental_table, final_table, connection):
             temp_table=temp_table,
         ))
 
-    dbutils.optimize(final_table, connection)
-
 def merge_likes(incremental_table, final_table, connection):
     with connection.begin():
         temp_table = incremental_table + '_unique'
@@ -355,10 +403,10 @@ def merge_likes(incremental_table, final_table, connection):
         )
         connection.execute("""
             CREATE TEMPORARY TABLE {temp_table} AS
-            SELECT distinct fbid_user, page_id
+            SELECT distinct fbid, page_id
             FROM {incremental_table}
-            LEFT JOIN {final_table} USING (fbid_user, page_id)
-            WHERE {final_table}.fbid_user is NULL
+            LEFT JOIN {final_table} USING (fbid, page_id)
+            WHERE {final_table}.fbid is NULL
         """.format(
             temp_table=temp_table,
             incremental_table=incremental_table,
@@ -377,16 +425,14 @@ def merge_likes(incremental_table, final_table, connection):
             final_table
         )
         connection.execute("""
-            INSERT INTO {final_table} (fbid_user, page_id)
-            SELECT fbid_user, page_id
+            INSERT INTO {final_table} (fbid, page_id)
+            SELECT fbid, page_id
             FROM {temp_table}
         """.format(
             final_table=final_table,
             incremental_table=incremental_table,
             temp_table=temp_table,
         ))
-
-    dbutils.optimize(final_table, connection)
 
 
 def merge_top_words(incremental_table, final_table, connection):
@@ -429,8 +475,6 @@ def merge_top_words(incremental_table, final_table, connection):
             incremental_table=incremental_table,
             temp_table=temp_table,
         ))
-
-    dbutils.optimize(final_table, connection)
 
 # Despite what the docs say, datetime.strptime() format doesn't like %z
 # see: http://stackoverflow.com/questions/526406/python-time-to-age-part-2-timezones/526450#526450

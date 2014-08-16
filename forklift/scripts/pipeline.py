@@ -1,7 +1,7 @@
 from boto.dynamodb.layer2 import Layer2
 from boto.dynamodb.condition import GE, IN
 from boto.s3.key import Key
-from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, add_new_data
+from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, add_new_data, POSTS_TABLE, USER_POSTS_TABLE, LIKES_TABLE, TOP_WORDS_TABLE, POST_AGGREGATES_TABLE, INTERACTOR_AGGREGATES_TABLE, POSTER_AGGREGATES_TABLE
 from forklift.db.base import engine
 from forklift.utils import batcher
 from forklift.s3.utils import get_conn_s3
@@ -13,6 +13,7 @@ from contextlib import closing
 import os
 import time
 import logging
+import logging.handlers as handlers
 import multiprocessing
 import uuid
 
@@ -36,6 +37,7 @@ def stream_files_since(timestamp):
     )
 
     table = querier.get_table('staging.fb_sync_maps')
+    logger.info("Scanning table {} for files since {}".format(table.name, timestamp))
     return (
         (item['bucket'], item['fbid_primary'], item['fbid_secondary'])
         for item in querier.scan(
@@ -79,6 +81,7 @@ def key_name(version, prefix):
 def handle_feed_s3(args):
     keys, out_bucket_name = args
 
+    logger.info("Received feed chunk of length {}".format(str(len(keys))))
     # name should have format primary_secondary; e.g., "1000000031200_100070833"
     feed_chunk = FeedChunk(vectorizer)
     for bucket_name, primary, secondary in keys:
@@ -95,6 +98,7 @@ def handle_feed_s3(args):
         TOP_WORDS: key_name(version, TOP_WORDS_FOLDER),
     }
 
+    logger.info("Writing chunk to s3: {}".format(key_names))
     feed_chunk.write_s3(
         conn_s3_global,
         out_bucket_name,
@@ -195,12 +199,6 @@ if __name__ == '__main__':
         default=1
     )
     parser.add_argument(
-        '--logfile',
-        type=str,
-        help='for debugging',
-        default=None
-    )
-    parser.add_argument(
         '--vectorizer_training_bucket',
         type=str,
         help='s3 bucket housing the raw feed files for training the vectorizer',
@@ -221,20 +219,6 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
 
-    hand_s = logging.StreamHandler()
-    hand_s.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
-    if args.logfile is None:
-        hand_s.setLevel(logging.DEBUG)
-    else:
-        hand_s.setLevel(logging.INFO)
-        hand_f = logging.FileHandler(args.logfile)
-        hand_f.setFormatter(logging.Formatter(
-            '%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s'
-        ))
-        hand_f.setLevel(logging.DEBUG)
-        logger.addHandler(hand_f)
-    logger.addHandler(hand_s)
-
     version = str(int(time.time()))
 
     process_feeds(
@@ -248,13 +232,27 @@ if __name__ == '__main__':
         args.training_set_size,
     )
 
-    with closing(engine.connect()) as connection:
-        add_new_data(
-            args.out_bucket,
-            version,
-            POSTS_FOLDER,
-            LINKS_FOLDER,
-            LIKES_FOLDER,
-            TOP_WORDS_FOLDER,
-            connection
-        )
+    logger.info("Done loading to s3, time for Redshift!")
+    connection = engine.connect()
+    add_new_data(
+        args.out_bucket,
+        version,
+        POSTS_FOLDER,
+        LINKS_FOLDER,
+        LIKES_FOLDER,
+        TOP_WORDS_FOLDER,
+        connection
+    )
+
+    conn = engine.raw_connection()
+    old_iso_level = conn.isolation_level
+    conn.set_isolation_level(0)
+    curs = conn.cursor()
+    for table in (POSTS_TABLE, USER_POSTS_TABLE, LIKES_TABLE, TOP_WORDS_TABLE, POST_AGGREGATES_TABLE):
+    	logger.info('vacuuming {}'.format(table))
+    	curs.execute('vacuum {}'.format(table))
+    	logger.info('vacuum of {} complete'.format(table))
+    	logger.info('analyzing {}'.format(table))
+    	curs.execute('analyze {}'.format(table))
+    	logger.info('analysis of {} complete'.format(table))
+    conn.set_isolation_level(old_iso_level)
