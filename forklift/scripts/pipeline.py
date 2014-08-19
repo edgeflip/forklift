@@ -1,8 +1,9 @@
 from boto.dynamodb.layer2 import Layer2
 from boto.dynamodb.condition import GE, IN
 from boto.s3.key import Key
-from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, add_new_data, POSTS_TABLE, USER_POSTS_TABLE, LIKES_TABLE, TOP_WORDS_TABLE, POST_AGGREGATES_TABLE, INTERACTOR_AGGREGATES_TABLE, POSTER_AGGREGATES_TABLE
+from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, add_new_data, AFFECTED_TABLES
 from forklift.db.base import engine
+from forklift.db.utils import optimize
 from forklift.utils import batcher
 from forklift.s3.utils import get_conn_s3
 from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
@@ -244,15 +245,5 @@ if __name__ == '__main__':
         connection
     )
 
-    conn = engine.raw_connection()
-    old_iso_level = conn.isolation_level
-    conn.set_isolation_level(0)
-    curs = conn.cursor()
-    for table in (POSTS_TABLE, USER_POSTS_TABLE, LIKES_TABLE, TOP_WORDS_TABLE, POST_AGGREGATES_TABLE):
-    	logger.info('vacuuming {}'.format(table))
-    	curs.execute('vacuum {}'.format(table))
-    	logger.info('vacuum of {} complete'.format(table))
-    	logger.info('analyzing {}'.format(table))
-    	curs.execute('analyze {}'.format(table))
-    	logger.info('analysis of {} complete'.format(table))
-    conn.set_isolation_level(old_iso_level)
+    for table in AFFECTED_TABLES:
+	optimize(table, logger)

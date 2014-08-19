@@ -126,6 +126,17 @@ def get_load_errs(connection):
 # http://docs.aws.amazon.com/redshift/latest/dg/r_ANALYZE.html
 # Amazon recommends that you run them both after adding or deleting rows
 # to help query speeds
-def optimize(table):
-    engine.execute("VACUUM {}".format(table))
-    engine.execute("ANALYZE {}".format(table))
+# Needs to be run outside of a transaction
+def optimize(table, logger):
+    conn = engine.raw_connection()
+    old_iso_level = conn.isolation_level
+    conn.set_isolation_level(0)
+    curs = conn.cursor()
+    logger.info('vacuuming {}'.format(table))
+    curs.execute('vacuum {}'.format(table))
+    logger.info('vacuum of {} complete'.format(table))
+    logger.info('analyzing {}'.format(table))
+    curs.execute('analyze {}'.format(table))
+    logger.info('analysis of {} complete'.format(table))
+    conn.set_isolation_level(old_iso_level)
+    conn.close()

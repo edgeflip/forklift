@@ -24,6 +24,16 @@ POST_AGGREGATES_TABLE = 'post_aggregates_pipeline_test'
 INTERACTOR_AGGREGATES_TABLE = 'user_interactor_aggregates_pipeline_test'
 POSTER_AGGREGATES_TABLE = 'user_poster_aggregates_pipeline_test'
 USER_AGGREGATES_TABLE = 'user_aggregates_pipeline_test'
+AFFECTED_TABLES = (
+    POSTS_TABLE,
+    USER_POSTS_TABLE,
+    LIKES_TABLE,
+    TOP_WORDS_TABLE,
+    POST_AGGREGATES_TABLE,
+    INTERACTOR_AGGREGATES_TABLE,
+    POSTER_AGGREGATES_TABLE,
+    USER_AGGREGATES_TABLE,
+)
 USERS_TABLE = 'users'
 EDGES_TABLE = 'edges'
 TOP_WORDS_COUNT = 20
@@ -459,7 +469,7 @@ def merge_interactor_aggregates(
         connection.execute("""
             INSERT INTO {final_table}
             SELECT
-                fbid_user,
+                {temp_table}.fbid_user,
                 count(distinct fbid_post) as num_posts_interacted_with,
                 count(distinct case when user_like then fbid_post else null end) as num_i_like,
                 count(distinct case when user_comment then fbid_post else null end) as num_i_comm,
@@ -497,14 +507,14 @@ def merge_poster_aggregates(
         connection.execute("""
             INSERT INTO {final_table}
             SELECT
-                fbid_poster,
+                {temp_table}.fbid_poster,
                 count(distinct fbid_post) num_posts,
                 count(distinct case when user_like then fbid_post else null end) as num_liking_mine,
                 count(distinct case when user_comment then fbid_post else null end) as num_commenting_mine,
                 count(distinct case when user_to then fbid_post else null end) as num_i_shared_with,
-                count(distinct fbid_poster) as num_friends_interacted_with_my_posts
+                count(distinct fbid_user) as num_friends_interacted_with_my_posts
             FROM {temp_table}
-            JOIN {full_table} on ({full_table}.fbid_poster = {temp_table}.poster)
+            JOIN {full_table} on ({full_table}.fbid_poster = {temp_table}.fbid_poster)
             GROUP BY 1
         """.format(
             final_table=final_aggregate_table,
@@ -650,6 +660,7 @@ def merge_user_aggregates(
     connection
 ):
     temp_table = final_aggregate_table + '_updated'
+    logger.info('Finding users who had updated aggregates this batch')
     with connection.begin():
         connection.execute("""
             CREATE TEMPORARY TABLE {temp_table} AS
@@ -665,12 +676,16 @@ def merge_user_aggregates(
             inbound=updated_inbound_interactions_table
         ))
 
+        logger.info(
+            '%s updated users found',
+            dbutils.get_rowcount(temp_table, connection)
+        )
+
         # delete from final table with changed userids
         connection.execute("""
             DELETE
             FROM {final_table}
-            WHERE fbid_poster in (select distinct fbid from {temp_table})
-            )
+            WHERE fbid in (select distinct fbid from {temp_table})
         """.format(
             final_table=final_aggregate_table,
             temp_table=temp_table
@@ -691,7 +706,7 @@ from (
         max(datediff(year, birthday, getdate())) as age,
         max(first_activity) as first_activity,
         max(last_activity) as last_activity,
-        count(distinct edges.fbid_source) as num_friends,
+        count(distinct {edges_table}.fbid_source) as num_friends,
         max(num_posts) as num_posts,
         max(num_posts_interacted_with) as num_posts_interacted_with,
         max(num_i_like) as num_i_like,
@@ -703,14 +718,14 @@ from (
         max(num_stat_upd) as num_stat_upd,
         max(num_friends_interacted_with_my_posts) as num_friends_interacted_with_my_posts,
         max(num_friends_i_interacted_with) as num_friends_i_interacted_with,
-        max(top_words.top_words) as top_words
+        max(top_words) as top_words
     from {temp_table}
     join {users_table} u using (fbid)
     left join {edges_table} on (u.fbid = {edges_table}.fbid_target)
     left join {post_aggregates_table} on (u.fbid = {post_aggregates_table}.fbid)
     left join {interactor_aggregates_table} me_as_interactor on (u.fbid = me_as_interactor.fbid_user)
     left join {poster_aggregates_table} me_as_poster on (u.fbid = me_as_poster.fbid_poster)
-    left join {top_words_table} on (u.fbid = top_words.fbid)
+    left join {top_words_table} on (u.fbid = {top_words_table}.fbid)
     left join user_clients on (u.fbid = user_clients.fbid)
     group by u.fbid
 )
