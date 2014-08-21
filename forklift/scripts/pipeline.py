@@ -3,7 +3,6 @@ from boto.dynamodb.condition import GE, IN
 from boto.s3.key import Key
 from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, add_new_data, AFFECTED_TABLES
 from forklift.db.base import engine
-from forklift.db.utils import optimize
 from forklift.utils import batcher
 from forklift.s3.utils import get_conn_s3
 from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
@@ -245,5 +244,3 @@ if __name__ == '__main__':
         connection
     )
 
-    for table in AFFECTED_TABLES:
-	optimize(table, logger)

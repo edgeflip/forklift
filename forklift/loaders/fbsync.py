@@ -36,6 +36,7 @@ AFFECTED_TABLES = (
 )
 USERS_TABLE = 'users'
 EDGES_TABLE = 'edges'
+USER_CLIENTS_TABLE = 'user_clients'
 TOP_WORDS_COUNT = 20
 DEFAULT_DELIMITER = "\t"
 POSTS = 'posts'
@@ -119,6 +120,122 @@ def create_sql(table_name):
             CREATE TABLE {table} (
                 fbid BIGINT NOT NULL,
                 top_words VARCHAR(4096)
+            )
+        """.format(table=table_name)
+    elif table_name == POST_AGGREGATES_TABLE:
+        return """
+            CREATE TABLE {table} (
+                fbid BIGINT NOT NULL,
+                first_activity DATE,
+                last_activity DATE,
+                num_stat_upd INT
+            )
+        """.format(table=table_name)
+    elif table_name == INTERACTOR_AGGREGATES_TABLE:
+        return """
+            CREATE TABLE {table} (
+                fbid_user BIGINT NOT NULL,
+                num_posts_interacted_with INT,
+                num_i_like INT,
+                num_i_comm INT,
+                num_shared_w_me INT,
+                num_friends_i_interacted_with INT
+            )
+        """.format(table=table_name)
+    elif table_name == POSTER_AGGREGATES_TABLE:
+        return """
+            CREATE TABLE {table} (
+                fbid_poster BIGINT NOT NULL,
+                num_posts INT,
+                num_mine_liked INT,
+                num_mine_commented INT,
+                num_i_shared_with INT,
+                num_friends_interacted_with_my_posts INT
+            )
+        """.format(table=table_name)
+    elif table_name == USER_AGGREGATES_TABLE:
+        return """
+            CREATE TABLE {table} (
+                is_primary BOOLEAN,
+                fbid BIGINT NOT NULL,
+                age INT,
+                first_activity DATE,
+                last_activity DATE,
+                num_friends INT,
+                num_posts INT,
+                num_posts_interacted_with INT,
+                num_i_like INT,
+                num_i_comm INT,
+                num_shared_w_me INT,
+                num_mine_liked INT,
+                num_mine_commented INT,
+                num_i_shared_with INT,
+                num_stat_upd INT,
+                num_friends_interacted_with_my_posts INT,
+                num_friends_i_interacted_with INT,
+                top_words VARCHAR(4096),
+                avg_time_between_activity INT,
+                avg_friends_interacted_with_my_posts INT,
+                avg_friends_i_interacted_with INT
+            )
+        """.format(table=table_name)
+    elif table_name == USERS_TABLE:
+        return """
+            CREATE TABLE {table} (
+                fbid BIGINT NOT NULL,
+                birthday DATE,
+                fname varchar(256),
+                lname varchar(256),
+                email varchar(256),
+                gender varchar(256),
+                city varchar(256),
+                state varchar(256),
+                country varchar(256),
+                activities varchar({text_len}),
+                affiliations varchar({text_len}),
+                books varchar({text_len}),
+                devices varchar(256),
+                friend_request_count INT,
+                has_timeline varchar(256),
+                interests varchar({text_len}),
+                languages varchar({text_len}),
+                likes_count INT,
+                movies varchar({text_len}),
+                music varchar({text_len}),
+                political varchar(1024),
+                profile_update_time TIMESTAMP,
+                quotes varchar({text_len}),
+                relationship_status varchar(256),
+                religion varchar(256),
+                sports varchar({text_len}),
+                tv varchar({text_len}),
+                wall_count INT,
+                updated TIMESTAMP
+            )
+        """.format(table=table_name, text_len=DB_TEXT_LEN)
+    elif table_name == EDGES_TABLE:
+        return """
+            CREATE TABLE {table} (
+                fbid_source bigint,
+                fbid_target bigint,
+                post_likes integer,
+                post_comms integer,
+                stat_likes integer,
+                stat_comms integer,
+                wall_posts integer,
+                wall_comms integer,
+                tags integer,
+                photos_target integer,
+                photos_other integer,
+                mut_friends integer,
+                updated timestamp
+            )
+        """.format(table=table_name)
+    elif table_name == USER_CLIENTS_TABLE:
+        return """
+            CREATE TABLE {table} (
+                fbid bigint,
+                client_id int
             )
         """.format(table=table_name)
     else:
@@ -267,6 +384,9 @@ def add_new_data(bucket_name, prefix, posts_folder, user_posts_folder, likes_fol
         connection
     )
 
+    for table in AFFECTED_TABLES:
+        dbutils.optimize(table, logger)
+
 
 def load_and_dedupe(bucket_name, prefix, source_folder, table_name, connection):
     raw_table = raw_table_name(table_name)
@@ -321,7 +441,7 @@ def calculate_users_with_outbound_interactions(
     user_posts_incremental_table,
     connection
 ):
-    temp_table = user_posts_incremental_table + '_inbound_updated'
+    temp_table = user_posts_incremental_table + '_outbound_updated'
     logger.info(
         'Populating list of users with updated post interactions from %s',
         user_posts_incremental_table
@@ -346,7 +466,7 @@ def calculate_users_with_inbound_interactions(
     user_posts_incremental_table,
     connection
 ):
-    temp_table = user_posts_incremental_table + '_outbound_updated'
+    temp_table = user_posts_incremental_table + '_inbound_updated'
     # 1. get list of user ids with new data
     logger.info(
         'Populating list of posters with updated post interactions from %s',
@@ -509,9 +629,9 @@ def merge_poster_aggregates(
             SELECT
                 {temp_table}.fbid_poster,
                 count(distinct fbid_post) num_posts,
-                count(distinct case when user_like then fbid_post else null end) as num_liking_mine,
-                count(distinct case when user_comment then fbid_post else null end) as num_commenting_mine,
-                count(distinct case when user_to then fbid_post else null end) as num_i_shared_with,
+                count(distinct case when user_like then fbid_post else null end) as num_mine_liked,
+                count(distinct case when user_comment then fbid_post else null end) as num_mine_commented,
+                count(distinct case when user_to then fbid_post else null end) as num_i_shared,
                 count(distinct fbid_user) as num_friends_interacted_with_my_posts
             FROM {temp_table}
             JOIN {full_table} on ({full_table}.fbid_poster = {temp_table}.fbid_poster)
@@ -620,10 +740,11 @@ def merge_top_words(incremental_table, final_table, connection):
         )
         connection.execute("""
             CREATE TEMPORARY TABLE {temp_table} AS
-            SELECT distinct fbid, top_words
+            SELECT fbid, max({incremental_table}.top_words) as top_words
             FROM {incremental_table}
             LEFT JOIN {final_table} USING (fbid)
             WHERE {final_table}.fbid is NULL
+            GROUP BY 1
         """.format(
             temp_table=temp_table,
             incremental_table=incremental_table,
@@ -668,7 +789,7 @@ def merge_user_aggregates(
                 select distinct fbid as fbid from {posts}
                 union select distinct fbid_user as fbid from {outbound}
                 union select distinct fbid_poster as fbid from {inbound}
-            )
+            ) sources
         """.format(
             temp_table=temp_table,
             posts=updated_post_users_table,
@@ -701,9 +822,9 @@ select
     case when num_posts_interacted_with > 0 then num_friends_i_interacted_with / num_posts_interacted_with else NULL end as avg_friends_i_interacted_with
 from (
     select
-        max(case when user_clients.fbid is not null then 1 else 0 end) as primary,
+        bool_or(user_clients.fbid is not null) as primary,
         u.fbid,
-        max(datediff(year, birthday, getdate())) as age,
+        max(date_part('year', now()) - date_part('year', birthday)) as age,
         max(first_activity) as first_activity,
         max(last_activity) as last_activity,
         count(distinct {edges_table}.fbid_source) as num_friends,
@@ -712,8 +833,8 @@ from (
         max(num_i_like) as num_i_like,
         max(num_i_comm) as num_i_comm,
         max(num_shared_w_me) as num_shared_w_me,
-        max(num_liking_mine) as num_liking_mine,
-        max(num_commenting_mine) as num_commenting_mine,
+        max(num_mine_liked) as num_mine_liked,
+        max(num_mine_commented) as num_mine_commented,
         max(num_i_shared_with) as num_i_shared_with,
         max(num_stat_upd) as num_stat_upd,
         max(num_friends_interacted_with_my_posts) as num_friends_interacted_with_my_posts,
@@ -728,7 +849,7 @@ from (
     left join {top_words_table} on (u.fbid = {top_words_table}.fbid)
     left join user_clients on (u.fbid = user_clients.fbid)
     group by u.fbid
-)
+) sums
         """.format(
             final_table=final_aggregate_table,
             temp_table=temp_table,

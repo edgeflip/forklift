@@ -314,7 +314,6 @@ class FBSyncTestCase(ForkliftTestCase):
     @classmethod
     def setUpClass(cls):
         super(FBSyncTestCase, cls).setUpClass()
-        # set up posts tables
         cls.posts_table = fbsync.POSTS_TABLE
         cls.posts_raw_table = fbsync.raw_table_name(cls.posts_table)
         cls.posts_incremental_table = fbsync.incremental_table_name(cls.posts_table)
@@ -330,6 +329,23 @@ class FBSyncTestCase(ForkliftTestCase):
         cls.page_likes_incremental_table = fbsync.incremental_table_name(cls.page_likes_table)
         cls.create_tables(cls.page_likes_table)
 
+        cls.top_words_table = fbsync.TOP_WORDS_TABLE
+        cls.top_words_raw_table = fbsync.raw_table_name(cls.top_words_table)
+        cls.top_words_incremental_table = fbsync.incremental_table_name(cls.top_words_table)
+        cls.create_tables(cls.top_words_table)
+
+        for table_name in (
+            fbsync.POST_AGGREGATES_TABLE,
+            fbsync.INTERACTOR_AGGREGATES_TABLE,
+            fbsync.POSTER_AGGREGATES_TABLE,
+            fbsync.USER_AGGREGATES_TABLE,
+            fbsync.USERS_TABLE,
+            fbsync.EDGES_TABLE,
+            fbsync.USER_CLIENTS_TABLE,
+        ):
+            drop_table_if_exists(table_name, cls.connection)
+            cls.connection.execute(fbsync.create_sql(table_name))
+
         # insert some common data that most of the tests will use (a post with a dupe)
         cls.insertDummyPost(cls.posts_raw_table)
         cls.insertDummyPost(cls.posts_raw_table)
@@ -343,6 +359,7 @@ class FBSyncTestCase(ForkliftTestCase):
         create_new_table(table_name, fbsync.raw_table_name(table_name), cls.connection)
         drop_table_if_exists(fbsync.incremental_table_name(table_name), cls.connection)
         create_new_table(fbsync.incremental_table_name(table_name), fbsync.raw_table_name(table_name), cls.connection)
+        print "created incremental", table_name
         create_new_table(fbsync.raw_table_name(fbsync.incremental_table_name(table_name)), table_name, cls.connection)
 
 
@@ -355,24 +372,41 @@ class FBSyncTestCase(ForkliftTestCase):
 
 
     @classmethod
-    def insertDummyPost(cls, table, post_type='stuff', post_id=None):
+    def insertDummyPost(cls, table, post_type='stuff', post_id=None, user_id=None, ts=None):
         post_id = post_id or cls.EXISTING_POST_ID
+        user_id = user_id or 65
         # beginning data is inserted into the raw table, that is, the one which houses duplicates
         # can't use the ORM here because no primary key can possibly be involved when dealing with dupes like these
-        ts = datetime.datetime(2014,2,1,2,0)
+        ts = ts or datetime.datetime(2014,2,1,2,0)
         cls.connection.execute(
             "insert into {} (fbid_post, fbid_user, ts, type) values (%s, %s, %s, %s)".format(table),
-            (post_id, 65, ts, post_type)
+            (post_id, user_id, ts, post_type)
         )
 
 
-    def insertDummyUserPost(self, post_id, user_id, table=None):
+    def insertDummyUserPost(self, post_id, user_id, table=None, poster_id=None, to=True, comm=False, like=False):
         table = table or fbsync.raw_table_name(self.user_posts_table)
+        poster_id = poster_id or 90
         self.connection.execute(
-            "insert into {} (fbid_post, fbid_user, fbid_poster, user_to) values (%s, %s, %s, %s)".format(table),
-            (post_id, user_id, 90, True)
+            "insert into {} (fbid_post, fbid_user, fbid_poster, user_to, user_comment, user_like) values (%s, %s, %s, %s, %s, %s)".format(table),
+            (post_id, user_id, poster_id, to, comm, like)
         )
 
+    def insertDummyPageLike(self, user_id):
+        page_id = 834
+        table = self.page_likes_incremental_table
+        self.connection.execute(
+            "insert into {} (fbid, page_id) values (%s, %s)".format(table),
+            (user_id, page_id)
+        )
+
+    def insertDummyTopWords(self, user_id):
+        top_words = "obama romney fisticuffs"
+        table = self.top_words_incremental_table
+        self.connection.execute(
+            "insert into {} (fbid, top_words) values (%s, %s)".format(table),
+            (user_id, top_words)
+        )
 
     def assert_num_results(self, num, table, post_id=None):
         post_id = post_id or self.EXISTING_POST_ID
@@ -397,8 +431,7 @@ class FBSyncTestCase(ForkliftTestCase):
         self.assert_num_results(1, self.posts_table)
 
 
-    @patch('forklift.db.utils.optimize')
-    def test_merge_posts(self, optimize_mock):
+    def test_merge_posts(self):
         new_post_id = "123_456"
 
         # 1. put some pre-existing data in the final table, but make sure it's clean beforehand
@@ -416,12 +449,8 @@ class FBSyncTestCase(ForkliftTestCase):
         self.assert_num_results(1, self.posts_table)
         self.assert_num_results(1, self.posts_table, post_id=new_post_id)
 
-        # 5. and we do want to optimize the tables after loading
-        self.assertEqual(optimize_mock.call_count, 1)
 
-
-    @patch('forklift.db.utils.optimize')
-    def test_merge_user_posts(self, optimize_mock):
+    def test_merge_user_posts(self):
         old_user_id = 40
         new_user_id = 50
         # 1. pre-existing data
@@ -438,6 +467,234 @@ class FBSyncTestCase(ForkliftTestCase):
         self.assertEqual(2, get_rowcount(self.user_posts_table, self.connection))
         self.assert_num_results(2, self.user_posts_table, post_id=self.EXISTING_POST_ID)
 
+
+    def test_merge_likes(self):
+        first_user = 45
+        second_user = 55
+        self.insertDummyPageLike(first_user)
+        self.insertDummyPageLike(first_user)
+        self.insertDummyPageLike(second_user)
+
+        fbsync.merge_likes(self.page_likes_incremental_table, self.page_likes_table, self.connection)
+
+        self.assertEqual(2, get_rowcount(self.page_likes_table, self.connection))
+
+    def test_merge_top_words(self):
+        first_user = 45
+        second_user = 55
+        self.insertDummyTopWords(first_user)
+        self.insertDummyTopWords(first_user)
+        self.insertDummyTopWords(second_user)
+
+        fbsync.merge_top_words(self.top_words_incremental_table, self.top_words_table, self.connection)
+
+        self.assertEqual(2, get_rowcount(self.top_words_table, self.connection))
+
+    def test_calculate_users_with_new_posts(self):
+        post_id = 45
+        self.__class__.insertDummyPost(table=self.posts_incremental_table, post_id=post_id)
+        updated_table = fbsync.calculate_users_with_new_posts(self.posts_incremental_table, self.connection)
+        self.assertEqual(1, get_rowcount(updated_table, self.connection))
+
+    def test_calculate_users_with_outbound_interactions(self):
+        table = self.user_posts_incremental_table
+        self.insertDummyUserPost(
+            post_id=1,
+            user_id=45,
+            table=table,
+        )
+        self.insertDummyUserPost(
+            post_id=2,
+            user_id=45,
+            table=table,
+        )
+        self.insertDummyUserPost(
+            post_id=3,
+            user_id=85,
+            table=table,
+        )
+        updated_table = fbsync.calculate_users_with_outbound_interactions(
+            table, self.connection
+        )
+        self.assertEqual(2, get_rowcount(updated_table, self.connection))
+
+    def test_calculate_users_with_inbound_interactions(self):
+        table = self.user_posts_incremental_table
+        self.insertDummyUserPost(
+            post_id=1,
+            user_id=45,
+            table=table,
+        )
+        self.insertDummyUserPost(
+            post_id=2,
+            user_id=85,
+            table=table,
+        )
+        updated_table = fbsync.calculate_users_with_inbound_interactions(
+            table, self.connection
+        )
+        self.assertEqual(1, get_rowcount(updated_table, self.connection))
+
+    def test_merge_post_aggregates(self):
+        updated_users_table = 'updated'
+        self.connection.execute('create temp table {} (fbid bigint)'.format(updated_users_table))
+        self.connection.execute('insert into {} values (1)'.format(updated_users_table))
+        self.connection.execute('insert into {} values (2)'.format(updated_users_table))
+
+        jan = datetime.date(2014, 1, 1)
+        feb = datetime.date(2014, 2, 1)
+        mar = datetime.date(2014, 3, 1)
+        self.insertDummyPost(
+            self.posts_table,
+            post_type='status',
+            user_id=1,
+            post_id=1,
+            ts=jan
+        )
+        self.insertDummyPost(
+            self.posts_table,
+            post_type='status',
+            user_id=1,
+            post_id=2,
+            ts=feb
+        )
+        self.insertDummyPost(
+            self.posts_table,
+            post_type='status',
+            user_id=2,
+            post_id=3,
+            ts=mar
+        )
+
+        fbsync.merge_post_aggregates(
+            updated_users_table,
+            self.posts_table,
+            fbsync.POST_AGGREGATES_TABLE,
+            self.connection
+        )
+
+        self.assertEqual(
+            2,
+            get_rowcount(fbsync.POST_AGGREGATES_TABLE, self.connection)
+        )
+        results = self.connection.execute(
+            "select * from {}".format(fbsync.POST_AGGREGATES_TABLE)
+        )
+        for row in results:
+            print row
+            (fbid, first, last, num_st) = row
+            if fbid == 1:
+                self.assertEqual(first, jan)
+                self.assertEqual(last, feb)
+                self.assertEqual(num_st, 2)
+            else:
+                self.assertEqual(first, mar)
+                self.assertEqual(last, mar)
+                self.assertEqual(num_st, 1)
+
+        self.insertDummyPost(
+            self.posts_table,
+            post_type='status',
+            user_id=2,
+            post_id=4,
+            ts=mar
+        )
+
+        fbsync.merge_post_aggregates(
+            updated_users_table,
+            self.posts_table,
+            fbsync.POST_AGGREGATES_TABLE,
+            self.connection
+        )
+
+        results = self.connection.execute(
+            "select * from {}".format(fbsync.POST_AGGREGATES_TABLE)
+        )
+        for row in results:
+            print row
+            (fbid, first, last, num_st) = row
+            if fbid == 1:
+                self.assertEqual(first, jan)
+                self.assertEqual(last, feb)
+                self.assertEqual(num_st, 2)
+            else:
+                self.assertEqual(first, mar)
+                self.assertEqual(last, mar)
+                self.assertEqual(num_st, 2)
+
+    def test_merge_interactor_aggregates(self):
+        updated_users_table = 'updated'
+        self.connection.execute('create temp table {} (fbid_user bigint)'.format(updated_users_table))
+        self.connection.execute('insert into {} values (1)'.format(updated_users_table))
+        self.connection.execute('insert into {} values (2)'.format(updated_users_table))
+
+        self.insertDummyUserPost(1, 1, like=True, table=self.user_posts_table)
+        self.insertDummyUserPost(1, 2, like=True, comm=True, table=self.user_posts_table)
+        self.insertDummyUserPost(2, 2, like=True, table=self.user_posts_table)
+        self.insertDummyUserPost(3, 2, table=self.user_posts_table)
+
+        fbsync.merge_interactor_aggregates(
+            updated_users_table,
+            self.user_posts_table,
+            fbsync.INTERACTOR_AGGREGATES_TABLE,
+            self.connection
+        )
+
+        results = self.connection.execute(
+            "select * from {}".format(fbsync.INTERACTOR_AGGREGATES_TABLE)
+        )
+        for row in results:
+            print row
+            (fbid, num_p, num_i_like, num_i_comm, num_shared, num_friends) = row
+            if fbid == 1:
+                self.assertEqual(num_p, 1)
+                self.assertEqual(num_shared, 1)
+                self.assertEqual(num_i_like, 1)
+                self.assertEqual(num_i_comm, 0)
+                self.assertEqual(num_friends, 1)
+            else:
+                self.assertEqual(num_p, 3)
+                self.assertEqual(num_shared, 3)
+                self.assertEqual(num_i_like, 2)
+                self.assertEqual(num_i_comm, 1)
+                self.assertEqual(num_friends, 1)
+
+    def test_merge_poster_aggregates(self):
+        updated_users_table = 'updated'
+        self.connection.execute('create temp table {} (fbid_poster bigint)'.format(updated_users_table))
+        self.connection.execute('insert into {} values (1)'.format(updated_users_table))
+        self.connection.execute('insert into {} values (2)'.format(updated_users_table))
+
+        self.insertDummyUserPost(1, 99, poster_id=1, like=True, table=self.user_posts_table)
+        self.insertDummyUserPost(1, 98, poster_id=1, like=True, comm=True, table=self.user_posts_table)
+        self.insertDummyUserPost(2, 99, poster_id=2, like=True, table=self.user_posts_table)
+        self.insertDummyUserPost(3, 99, poster_id=2, table=self.user_posts_table)
+
+        fbsync.merge_poster_aggregates(
+            updated_users_table,
+            self.user_posts_table,
+            fbsync.POSTER_AGGREGATES_TABLE,
+            self.connection
+        )
+
+        results = self.connection.execute(
+            "select * from {}".format(fbsync.POSTER_AGGREGATES_TABLE)
+        )
+        for row in results:
+            print row
+            (fbid, posts, like, comm, share, num_friends) = row
+            if fbid == 1:
+                self.assertEqual(posts, 1)
+                self.assertEqual(share, 1)
+                self.assertEqual(like, 1)
+                self.assertEqual(comm, 1)
+                self.assertEqual(num_friends, 2)
+            else:
+                self.assertEqual(posts, 2)
+                self.assertEqual(share, 2)
+                self.assertEqual(like, 1)
+                self.assertEqual(comm, 0)
+                self.assertEqual(num_friends, 1)
 
     # more of an integration test, minus the s3 stuff of course
     @patch('forklift.db.utils.optimize')
@@ -462,9 +719,11 @@ class FBSyncTestCase(ForkliftTestCase):
         load_mock.side_effect = fake_load_from_s3
 
         # 3. the s3 arguments don't really matter here
-        fbsync.add_new_data('stuff', 'stuff', 'stuff', 'stuff', 'stuff', self.connection)
+        fbsync.add_new_data(1,1,1,1,1,1, self.connection)
 
         # 4. verify both tables received correct data
         self.assertEqual(2, get_rowcount(self.posts_table, self.connection))
         self.assertEqual(2, get_rowcount(self.user_posts_table, self.connection))
 
+        # 5. and we do want to optimize the tables after loading
+        self.assertEqual(optimize_mock.call_count, 8)
