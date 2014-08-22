@@ -1,7 +1,7 @@
 from boto.dynamodb.layer2 import Layer2
-from boto.dynamodb.condition import GE, IN
+from boto.dynamodb.condition import IN, BETWEEN
 from boto.s3.key import Key
-from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, add_new_data, AFFECTED_TABLES
+from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, add_new_data
 from forklift.db.base import engine
 from forklift.utils import batcher
 from forklift.s3.utils import get_conn_s3
@@ -9,11 +9,9 @@ from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
 from itertools import imap, repeat
 import forklift.nlp.tfidf as tfidf
 import argparse
-from contextlib import closing
 import os
 import time
 import logging
-import logging.handlers as handlers
 import multiprocessing
 import uuid
 
@@ -22,22 +20,26 @@ logger.setLevel(logging.DEBUG)
 logger.propagate = False
 
 BATCH_SIZE = 100
-S3_OUT_BUCKET_NAME = "redshift_transfer_tristan"
-DAYS_BACK = 1
+S3_OUT_BUCKET_NAME = "warehouse-forklift"
+HOURS_BACK = 24
 POSTS_FOLDER = 'posts'
 LINKS_FOLDER = 'links'
 LIKES_FOLDER = 'likes'
 TOP_WORDS_FOLDER = 'top_words'
 
 
-def stream_files_since(timestamp):
+def stream_files_between(start, end):
     querier = Layer2(
         aws_access_key_id=AWS_ACCESS_KEY,
         aws_secret_access_key=AWS_SECRET_KEY
     )
 
-    table = querier.get_table('staging.fb_sync_maps')
-    logger.info("Scanning table {} for files since {}".format(table.name, timestamp))
+    table = querier.get_table('prod.fb_sync_maps')
+    logger.info("Scanning table {} for files between {} and {}".format(
+        table.name,
+        start,
+        end
+    ))
     return (
         (item['bucket'], item['fbid_primary'], item['fbid_secondary'])
         for item in querier.scan(
@@ -50,7 +52,7 @@ def stream_files_since(timestamp):
                 'bucket'
             ],
             scan_filter={
-                'updated': GE(timestamp),
+                'updated': BETWEEN(start, end),
                 'status': IN([
                     'back_fill',
                     'page_likes',
@@ -116,7 +118,8 @@ def process_feeds(
     worker_count,
     out_bucket_name,
     version,
-    days_back,
+    start,
+    end,
     pretrained_vectorizer_bucket,
     pretrained_vectorizer_prefix,
     vectorizer_training_bucket,
@@ -141,7 +144,7 @@ def process_feeds(
     )
 
     recent_feeds_batched = batcher(
-        stream_files_since(int(time.time() - (86400*days_back))),
+        stream_files_between(start, end),
         BATCH_SIZE
     )
     feed_arg_iter = imap(
@@ -211,21 +214,39 @@ if __name__ == '__main__':
         help='number of feeds to including in training set',
         default=tfidf.TRAINING_SET_SIZE
     )
-    parser.add_argument(
-        '--days_back',
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        '--hours_back',
         type=int,
-        help='# of days back to look for FBSync data',
-        default=DAYS_BACK,
+        help='# of hours back to look for FBSync data',
+    )
+    group.add_argument(
+        '--start_timestamp',
+        type=int,
+        help='beginning of FBSync timestamp range',
+    )
+    parser.add_argument(
+        '--end_timestamp',
+        type=int,
+        help='end of FBSync timestamp range',
     )
     args = parser.parse_args()
 
-    version = str(int(time.time()))
+    version = int(time.time())
+
+    end = args.end_timestamp or version
+    if args.start_timestamp:
+        start = args.start_timestamp
+    else:
+        hours_back = args.hours_back or HOURS_BACK
+        start = end - 3600*hours_back
 
     process_feeds(
         args.workers,
         args.out_bucket,
-        version,
-        args.days_back,
+        str(version),
+        start,
+        end,
         args.pretrained_vectorizer_bucket,
         args.pretrained_vectorizer_prefix,
         args.vectorizer_training_bucket,
@@ -243,4 +264,3 @@ if __name__ == '__main__':
         TOP_WORDS_FOLDER,
         connection
     )
-

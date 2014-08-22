@@ -49,8 +49,8 @@ ENTITIES = (POSTS, LINKS, LIKES, TOP_WORDS)
 logger = logging.getLogger(__name__)
 
 
-def incremental_table_name(table_base):
-    return "{}_incremental".format(table_base)
+def incremental_table_name(table_base, version):
+    return "{}_{}".format(table_base, version)
 
 
 def raw_table_name(table_base):
@@ -266,7 +266,7 @@ def dedupe_sql(base_table_name):
         base_table_name == incremental_table_name(POSTS_TABLE)
     ):
         return """
-            create temp table {new_table} as
+            create table {new_table} as
             select
                 max(fbid_user) as fbid_user,
                 fbid_post,
@@ -292,7 +292,7 @@ def dedupe_sql(base_table_name):
         base_table_name == incremental_table_name(USER_POSTS_TABLE)
     ):
         return """
-            create temp table {new_table} as
+            create table {new_table} as
             select
                 fbid_post,
                 max(fbid_user) as fbid_user,
@@ -310,7 +310,7 @@ def dedupe_sql(base_table_name):
         base_table_name == incremental_table_name(LIKES_TABLE)
     ):
         return """
-            create temp table {new_table} as
+            create table {new_table} as
             select
                 fbid,
                 page_id
@@ -324,8 +324,8 @@ def dedupe_sql(base_table_name):
         base_table_name == incremental_table_name(TOP_WORDS_TABLE)
     ):
         return """
-            create temp table {new_table} as
-            select fbid, max(top_words)
+            create table {new_table} as
+            select fbid, max(top_words) as top_words
             from {raw_table}
             group by fbid
         """
@@ -334,19 +334,21 @@ def dedupe_sql(base_table_name):
 
 
 # when FBSync just grabbed some new data and we want to merge it in
-def add_new_data(bucket_name, prefix, posts_folder, user_posts_folder, likes_folder, top_words_folder, connection):
-    posts_incremental = incremental_table_name(POSTS_TABLE)
-    user_posts_incremental = incremental_table_name(USER_POSTS_TABLE)
-    likes_incremental = incremental_table_name(LIKES_TABLE)
-    top_words_incremental = incremental_table_name(TOP_WORDS_TABLE)
-    for inc_table in (
+def add_new_data(bucket_name, common_prefix, version, posts_folder, user_posts_folder, likes_folder, top_words_folder, connection):
+    posts_incremental = incremental_table_name(POSTS_TABLE, version)
+    user_posts_incremental = incremental_table_name(USER_POSTS_TABLE, version)
+    likes_incremental = incremental_table_name(LIKES_TABLE, version)
+    top_words_incremental = incremental_table_name(TOP_WORDS_TABLE, version)
+    incremental_tables = (
         posts_incremental,
         user_posts_incremental,
         likes_incremental,
         top_words_incremental
-    ):
-        dbutils.drop_table_if_exists(inc_table, connection)
+    )
+    for incremental_table in incremental_tables:
+        dbutils.drop_table_if_exists(incremental_table, connection)
 
+    prefix = "{}/{}".format(common_prefix, version)
     with connection.begin():
         load_and_dedupe(bucket_name, prefix, posts_folder, posts_incremental, connection)
         load_and_dedupe(bucket_name, prefix, user_posts_folder, user_posts_incremental, connection)
@@ -386,6 +388,9 @@ def add_new_data(bucket_name, prefix, posts_folder, user_posts_folder, likes_fol
 
     for table in AFFECTED_TABLES:
         dbutils.optimize(table, logger)
+
+    for incremental_table in incremental_tables:
+        dbutils.drop_table_if_exists(incremental_table, connection)
 
 
 def load_and_dedupe(bucket_name, prefix, source_folder, table_name, connection):
