@@ -19,9 +19,10 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 logger.propagate = False
 
-BATCH_SIZE = 100
+BATCH_SIZE = 25
 S3_OUT_BUCKET_NAME = "warehouse-forklift"
 HOURS_BACK = 24
+COMMON_OUTPUT_PREFIX = "transfer_batches"
 POSTS_FOLDER = 'posts'
 LINKS_FOLDER = 'links'
 LIKES_FOLDER = 'likes'
@@ -77,7 +78,7 @@ def worker_setup(vocab, idf):
 
 
 def key_name(version, prefix):
-    return "/".join((version, prefix, str(uuid.uuid4())))
+    return "/".join((COMMON_OUTPUT_PREFIX, str(version), prefix, str(uuid.uuid4())))
 
 
 def handle_feed_s3(args):
@@ -257,7 +258,8 @@ if __name__ == '__main__':
     connection = engine.connect()
     add_new_data(
         args.out_bucket,
-        version,
+        COMMON_OUTPUT_PREFIX,
+	str(version),
         POSTS_FOLDER,
         LINKS_FOLDER,
         LIKES_FOLDER,
