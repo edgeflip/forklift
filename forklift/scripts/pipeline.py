@@ -141,7 +141,8 @@ def process_feeds(
     pool = multiprocessing.Pool(
         processes=worker_count,
         initializer=worker_setup,
-        initargs=[vocab, idf]
+        initargs=[vocab, idf],
+        maxtasksperchild=5,
     )
 
     recent_feeds_batched = batcher(

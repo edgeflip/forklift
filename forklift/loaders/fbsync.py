@@ -15,6 +15,7 @@ from urlparse import urlparse
 from forklift.s3.utils import write_string_to_key
 
 DB_TEXT_LEN = 4096
+MAX_RECORDS_TO_DEDUPE = 100000000
 UNIQUE_POST_ID_TABLE = 'fbid_post_ids'
 POSTS_TABLE = 'posts_pipeline_test'
 USER_POSTS_TABLE = 'user_posts_pipeline_test'
@@ -349,33 +350,94 @@ def add_new_data(bucket_name, common_prefix, version, posts_folder, user_posts_f
         dbutils.drop_table_if_exists(incremental_table, connection)
 
     with connection.begin():
-        load_and_dedupe(bucket_name, common_prefix, version, posts_folder, posts_incremental, connection)
-        load_and_dedupe(bucket_name, common_prefix, version, user_posts_folder, user_posts_incremental, connection)
-        load_and_dedupe(bucket_name, common_prefix, version, likes_folder, likes_incremental, connection)
-        load_and_dedupe(bucket_name, common_prefix, version, top_words_folder, top_words_incremental, connection)
+        load(
+            bucket_name,
+            common_prefix,
+            version,
+            posts_folder,
+            raw_table_name(posts_incremental),
+            connection
+        )
+        load(
+            bucket_name,
+            common_prefix,
+            version,
+            user_posts_folder,
+            raw_table_name(user_posts_incremental),
+            connection
+        )
+        load(
+            bucket_name,
+            common_prefix,
+            version,
+            likes_folder,
+            raw_table_name(likes_incremental),
+            connection
+        )
+        load(
+            bucket_name,
+            common_prefix,
+            version,
+            top_words_folder,
+            raw_table_name(top_words_incremental),
+            connection
+        )
+
+    merge_in_smaller_batches(
+        raw_table_name(posts_incremental),
+        posts_incremental,
+        POSTS_TABLE,
+        find_new_posts,
+        merge_posts,
+        version,
+        connection
+    )
+    merge_in_smaller_batches(
+        raw_table_name(user_posts_incremental),
+        user_posts_incremental,
+        USER_POSTS_TABLE,
+        find_new_user_posts,
+        merge_user_posts,
+        version,
+        connection
+    )
+    merge_in_smaller_batches(
+        raw_table_name(likes_incremental),
+        likes_incremental,
+        LIKES_TABLE,
+        find_new_likes,
+        merge_likes,
+        version,
+        connection
+    )
+    merge_in_smaller_batches(
+        raw_table_name(top_words_incremental),
+        top_words_incremental,
+        TOP_WORDS_TABLE,
+        find_new_top_words,
+        merge_top_words,
+        version,
+        connection
+    )
 
     # get posts and related aggregates
-    merge_posts(posts_incremental, POSTS_TABLE, connection)
     updated_posts_table = calculate_users_with_new_posts(
-        posts_incremental,
+        raw_table_name(posts_incremental),
         connection
     )
     merge_post_aggregates(updated_posts_table, POSTS_TABLE, POST_AGGREGATES_TABLE, connection)
     # post interactions and related aggregates
-    merge_user_posts(user_posts_incremental, USER_POSTS_TABLE, connection)
     outbound_users_table = calculate_users_with_outbound_interactions(
-        user_posts_incremental,
+        raw_table_name(user_posts_incremental),
         connection
     )
 
     inbound_users_table = calculate_users_with_inbound_interactions(
-        user_posts_incremental,
+        raw_table_name(user_posts_incremental),
         connection
     )
     merge_interactor_aggregates(outbound_users_table, USER_POSTS_TABLE, INTERACTOR_AGGREGATES_TABLE, connection)
     merge_poster_aggregates(inbound_users_table, USER_POSTS_TABLE, POSTER_AGGREGATES_TABLE, connection)
-    merge_likes(likes_incremental, LIKES_TABLE, connection)
-    merge_top_words(top_words_incremental, TOP_WORDS_TABLE, connection)
 
     merge_user_aggregates(
         updated_posts_table,
@@ -391,9 +453,40 @@ def add_new_data(bucket_name, common_prefix, version, posts_folder, user_posts_f
     for incremental_table in incremental_tables:
         dbutils.drop_table_if_exists(incremental_table, connection)
 
+def merge_in_smaller_batches(
+    raw_table,
+    incremental_table,
+    final_table,
+    finder_routine,
+    merger_routine,
+    version,
+    connection
+):
+    new_table = finder_routine(
+        raw_table,
+        final_table,
+        connection
+    )
+    unmerged_row_count = dbutils.get_rowcount(new_table, connection)
+    while unmerged_row_count > 0:
+        logger.info("Remaining unmerged rows: {}".format(unmerged_row_count))
+        dedupe(
+            new_table,
+            incremental_table,
+            version,
+            connection
+        )
+        merger_routine(incremental_table, final_table, connection)
+        dbutils.drop_table(incremental_table, connection)
+        dbutils.drop_table(new_table, connection)
+        new_table = finder_routine(
+            raw_table,
+            final_table,
+            connection
+        )
+        unmerged_row_count = dbutils.get_rowcount(new_table, connection)
 
-def load_and_dedupe(bucket_name, common_prefix, version, source_folder, table_name, connection):
-    raw_table = raw_table_name(table_name)
+def load(bucket_name, common_prefix, version, source_folder, raw_table, connection):
     path = '/'.join((common_prefix, version, source_folder))
     logger.info(
         'Loading raw data into %s from s3://%s/%s',
@@ -413,7 +506,6 @@ def load_and_dedupe(bucket_name, common_prefix, version, source_folder, table_na
         dbutils.get_rowcount(raw_table, connection),
         raw_table
     )
-    dedupe(raw_table, table_name, version, connection)
 
 
 def calculate_users_with_new_posts(
@@ -501,50 +593,180 @@ def calculate_users_with_inbound_interactions(
 
     return temp_table
 
+def find_new_posts(raw_table, final_table, connection):
+    temp_table = raw_table + '_new'
+    # populate list of new post ids
+    logger.info(
+        'Populating list of new posts from %s compared with records in %s',
+        raw_table,
+        final_table
+    )
+    connection.execute("""
+        CREATE TABLE {temp_table} AS
+        SELECT *
+        FROM {raw_table}
+        LEFT JOIN {final_table} USING (fbid_post)
+        WHERE {final_table}.fbid_post is NULL
+        LIMIT {limit}
+    """.format(
+        temp_table=temp_table,
+        raw_table=raw_table,
+        final_table=final_table,
+        limit=MAX_RECORDS_TO_DEDUPE,
+    ))
+
+    logger.info(
+        '%s new posts found',
+        dbutils.get_rowcount(temp_table, connection)
+    )
+    return temp_table
+
+
+def find_new_user_posts(incremental_table, final_table, connection):
+    temp_table = incremental_table + '_new'
+    # populate list of new post ids
+    dbutils.drop_table_if_exists(temp_table, connection)
+    logger.info(
+        'Populating list of new records from %s compared with records in %s',
+        incremental_table,
+        final_table
+    )
+    connection.execute("""
+        CREATE TABLE {temp_table} AS
+        SELECT *
+        FROM {incremental_table}
+        LEFT JOIN {final_table} USING (fbid_post, fbid_user)
+        WHERE {final_table}.fbid_post is NULL
+    """.format(
+        temp_table=temp_table,
+        incremental_table=incremental_table,
+        final_table=final_table
+    ))
+
+    logger.info(
+        '%s new records found out of %s in total',
+        dbutils.get_rowcount(temp_table, connection),
+        dbutils.get_rowcount(incremental_table, connection),
+    )
+    return temp_table
+
+
+def find_new_likes(incremental_table, final_table, connection):
+    temp_table = incremental_table + '_new'
+    dbutils.drop_table_if_exists(temp_table, connection)
+    logger.info(
+        'Populating list of new records from %s compared with %s',
+        incremental_table, final_table
+    )
+    connection.execute("""
+        CREATE TABLE {temp_table} AS
+        SELECT distinct fbid, page_id
+        FROM {incremental_table}
+        LEFT JOIN {final_table} USING (fbid, page_id)
+        WHERE {final_table}.fbid is NULL
+    """.format(
+        temp_table=temp_table,
+        incremental_table=incremental_table,
+        final_table=final_table
+    ))
+
+    logger.info(
+        '%s new records found',
+        dbutils.get_rowcount(temp_table, connection)
+    )
+    return temp_table
+
+def find_new_top_words(incremental_table, final_table, connection):
+    temp_table = incremental_table + '_new'
+    dbutils.drop_table_if_exists(temp_table, connection)
+    logger.info(
+        'Populating list of new top words from %s compared with %s',
+        incremental_table, final_table
+    )
+    connection.execute("""
+        CREATE TABLE {temp_table} AS
+        SELECT fbid, max({incremental_table}.top_words) as top_words
+        FROM {incremental_table}
+        LEFT JOIN {final_table} USING (fbid)
+        WHERE {final_table}.fbid is NULL
+        GROUP BY 1
+    """.format(
+        temp_table=temp_table,
+        incremental_table=incremental_table,
+        final_table=final_table
+    ))
+
+    logger.info(
+        '%s new top_words found',
+        dbutils.get_rowcount(temp_table, connection)
+    )
+    return temp_table
+
 # take deduped new posts from 'incremental_table' and merge them into 'final_table'
-def merge_posts(incremental_table, final_table, connection):
-    newconn = connection.connect()
-    with newconn.begin():
-        temp_table = incremental_table + '_unique'
-        # populate list of new post ids
-        logger.info(
-            'Populating list of new post ids from %s compared with records in %s',
-            incremental_table,
-            final_table
-        )
-        newconn.execute("""
-            CREATE TEMPORARY TABLE {temp_table} AS
-            SELECT distinct(fbid_post) fbid_post
-            FROM {incremental_table}
-            LEFT JOIN {final_table} USING (fbid_post)
-            WHERE {final_table}.fbid_post is NULL
-        """.format(
-            temp_table=temp_table,
-            incremental_table=incremental_table,
-            final_table=final_table
-        ))
+def merge_posts(deduped_table, final_table, connection):
+    logger.info(
+        'Inserting new rows from %s into %s',
+        deduped_table,
+        final_table
+    )
+    connection.execute("""
+        INSERT INTO {final_table}
+        SELECT {deduped_table}.*
+        FROM {deduped_table}
+    """.format(
+        final_table=final_table,
+        deduped_table=deduped_table,
+    ))
 
-        logger.info(
-            '%s new posts found',
-            dbutils.get_rowcount(temp_table, newconn)
-        )
+# take deduped new user_posts from 'incremental_table' and merge them into 'final_table'
+def merge_user_posts(deduped_table, final_table, connection):
+    # insert new versions into final table
+    logger.info(
+        'Inserting new rows from %s into %s',
+        deduped_table,
+        final_table
+    )
+    connection.execute("""
+        INSERT INTO {final_table}
+        SELECT {deduped_table}.*
+        FROM {deduped_table}
+    """.format(
+        final_table=final_table,
+        deduped_table=deduped_table,
+    ))
 
-        # insert new versions into final table
-        logger.info(
-            'Inserting new rows from %s into %s',
-            incremental_table,
-            final_table
-        )
-        newconn.execute("""
-            INSERT INTO {final_table}
-            SELECT {incremental_table}.*
-            FROM {temp_table}
-            JOIN {incremental_table} using (fbid_post)
-        """.format(
-            final_table=final_table,
-            incremental_table=incremental_table,
-            temp_table=temp_table,
-        ))
+def merge_likes(deduped_table, final_table, connection):
+    # insert new versions into final table
+    logger.info(
+        'Inserting new rows from %s into %s',
+        deduped_table,
+        final_table
+    )
+    connection.execute("""
+        INSERT INTO {final_table} (fbid, page_id)
+        SELECT fbid, page_id
+        FROM {deduped_table}
+    """.format(
+        final_table=final_table,
+        deduped_table=deduped_table,
+    ))
+
+
+def merge_top_words(deduped_table, final_table, connection):
+    # insert new versions into final table
+    logger.info(
+        'Inserting new rows from %s into %s',
+        deduped_table,
+        final_table
+    )
+    connection.execute("""
+        INSERT INTO {final_table} (fbid, top_words)
+        SELECT fbid, top_words
+        FROM {deduped_table}
+    """.format(
+        final_table=final_table,
+        deduped_table=deduped_table,
+    ))
 
 
 def merge_post_aggregates(
@@ -659,138 +881,6 @@ def merge_poster_aggregates(
         ))
 
 
-# take deduped new user_posts from 'incremental_table' and merge them into 'final_table'
-def merge_user_posts(incremental_table, final_table, connection):
-    newconn = connection.connect()
-    with newconn.begin():
-        temp_table = incremental_table + '_unique'
-        # populate list of new post ids
-        dbutils.drop_table_if_exists(temp_table, newconn)
-        logger.info(
-            'Populating list of new post ids from %s compared with records in %s',
-            incremental_table,
-            final_table
-        )
-        newconn.execute("""
-            CREATE TEMPORARY TABLE {temp_table} AS
-            SELECT distinct fbid_post, fbid_user
-            FROM {incremental_table}
-            LEFT JOIN {final_table} USING (fbid_post, fbid_user)
-            WHERE {final_table}.fbid_post is NULL
-        """.format(
-            temp_table=temp_table,
-            incremental_table=incremental_table,
-            final_table=final_table
-        ))
-
-        logger.info(
-            '%s new user_posts found out of %s in total',
-            dbutils.get_rowcount(temp_table, newconn),
-            dbutils.get_rowcount(incremental_table, newconn),
-        )
-
-        # insert new versions into final table
-        logger.info(
-            'Inserting new rows from %s into %s',
-            incremental_table,
-            final_table
-        )
-        newconn.execute("""
-            INSERT INTO {final_table}
-            SELECT {incremental_table}.*
-            FROM {temp_table}
-            JOIN {incremental_table} using (fbid_post, fbid_user)
-        """.format(
-            final_table=final_table,
-            incremental_table=incremental_table,
-            temp_table=temp_table,
-        ))
-
-def merge_likes(incremental_table, final_table, connection):
-    newconn = connection.connect()
-    with newconn.begin():
-        temp_table = incremental_table + '_unique'
-        dbutils.drop_table_if_exists(temp_table, newconn)
-        logger.info(
-            'Populating list of new page likes from %s compared with %s',
-            incremental_table, final_table
-        )
-        newconn.execute("""
-            CREATE TEMPORARY TABLE {temp_table} AS
-            SELECT distinct fbid, page_id
-            FROM {incremental_table}
-            LEFT JOIN {final_table} USING (fbid, page_id)
-            WHERE {final_table}.fbid is NULL
-        """.format(
-            temp_table=temp_table,
-            incremental_table=incremental_table,
-            final_table=final_table
-        ))
-
-        logger.info(
-            '%s new page_likes found',
-            dbutils.get_rowcount(temp_table, newconn)
-        )
-
-        # insert new versions into final table
-        logger.info(
-            'Inserting new rows from %s into %s',
-            incremental_table,
-            final_table
-        )
-        newconn.execute("""
-            INSERT INTO {final_table} (fbid, page_id)
-            SELECT fbid, page_id
-            FROM {temp_table}
-        """.format(
-            final_table=final_table,
-            incremental_table=incremental_table,
-            temp_table=temp_table,
-        ))
-
-
-def merge_top_words(incremental_table, final_table, connection):
-    newconn = connection.connect()
-    with newconn.begin():
-        temp_table = incremental_table + '_unique'
-        dbutils.drop_table_if_exists(temp_table, newconn)
-        logger.info(
-            'Populating list of new top words from %s compared with %s',
-            incremental_table, final_table
-        )
-        newconn.execute("""
-            CREATE TEMPORARY TABLE {temp_table} AS
-            SELECT fbid, max({incremental_table}.top_words) as top_words
-            FROM {incremental_table}
-            LEFT JOIN {final_table} USING (fbid)
-            WHERE {final_table}.fbid is NULL
-            GROUP BY 1
-        """.format(
-            temp_table=temp_table,
-            incremental_table=incremental_table,
-            final_table=final_table
-        ))
-
-        logger.info(
-            '%s new top_words found',
-            dbutils.get_rowcount(temp_table, newconn)
-        )
-
-        # insert new versions into final table
-        logger.info(
-            'Inserting new rows from %s into %s',
-            incremental_table,
-            final_table
-        )
-        newconn.execute("""
-            INSERT INTO {final_table} (fbid, top_words)
-            SELECT fbid, top_words
-            FROM {temp_table}
-        """.format(
-            final_table=final_table,
-            incremental_table=incremental_table,
-            temp_table=temp_table,
-        ))
 
 
 def merge_user_aggregates(
