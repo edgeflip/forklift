@@ -1,9 +1,16 @@
-from logging import debug, info
+import csv
+from logging import debug, info, warning
+import psycopg2
+import tempfile
 from sqlalchemy.exc import ProgrammingError
-from contextlib import closing, contextmanager
-from forklift.db.base import engine
+from contextlib import contextmanager
+from forklift.db.base import redshift_engine, rds_source_engine, rds_cache_engine
+from forklift.s3.utils import get_conn_s3, key_to_local_file
 from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
+import time
+import os
 
+BUCKET_NAME = 'warehouse-forklift'
 
 DOES_NOT_EXIST_MESSAGE_TEMPLATE = '"{0}" does not exist'
 
@@ -107,10 +114,24 @@ def load_from_s3(connection, bucket_name, key_name, table_name, delim="\t", crea
                 secret=AWS_SECRET_KEY,
             )
         )
-    except ProgrammingError as e:
+    except ProgrammingError:
         info("error loading: \n %s", get_load_errs(connection))
         raise
 
+
+def unload_to_s3(connection, table_name, bucket_name, key_name, delim="\t"):
+    connection.execute("""
+        UNLOAD ('select * from {table}') TO 's3://{bucket}/{key}'
+        CREDENTIALS 'aws_access_key_id={access};aws_secret_access_key={secret}'
+        DELIMITER '{delim}'
+    """.format(
+        delim=delim,
+        table=table_name,
+        bucket=bucket_name,
+        key=key_name,
+        access=AWS_ACCESS_KEY,
+        secret=AWS_SECRET_KEY,
+    ))
 
 def get_load_errs(connection):
     # see: http://docs.aws.amazon.com/redshift/latest/dg/r_STL_LOAD_ERRORS.html
@@ -132,7 +153,7 @@ def get_load_errs(connection):
 # to help query speeds
 # Needs to be run outside of a transaction
 def optimize(table, logger):
-    conn = engine.raw_connection()
+    conn = redshift_engine.raw_connection()
     old_iso_level = conn.isolation_level
     conn.set_isolation_level(0)
     curs = conn.cursor()
@@ -144,3 +165,176 @@ def optimize(table, logger):
     logger.info('analysis of {} complete'.format(table))
     conn.set_isolation_level(old_iso_level)
     conn.close()
+
+
+def mysql_redshift_column_map(val):
+    redshift_vals = {
+        'int' : 'integer',
+        'mediumint': 'bigint',
+        'tinyint': 'integer',
+        'bigint' : 'bigint',
+        'decimal' : 'decimal',
+        'real' : 'real',
+        'double precision' : 'double precision',
+        'boolean' : 'boolean',
+        'char' : 'char(50)',  # ehhh.. this is usually ips
+        'varchar' : 'varchar(1028)',
+        'date' : 'date',
+        'timestamp': 'timestamp',
+        'datetime': 'timestamp',  # kinda magic
+        'longtext': 'varchar',  # .. really magic
+        }
+
+
+    out = redshift_vals[val.split('(')[0]]
+    return out
+
+
+def create_query(description):
+    return ','.join(
+        ' '.join(
+            [ columnname, mysql_redshift_column_map(datatype) ]
+        ) for (columnname, datatype) in description
+    )
+
+
+def write2csv(table, cur):
+    debug('Creating CSV for {}'.format(table))
+    l = 20000
+    o = 0
+    cur.execute("select * from {0} limit {1} offset {2}".format(table, l, o))
+    with open('%s.csv' % table, 'wb') as csvfile:
+        writer = csv.writer(csvfile, delimiter='|')
+        writer.writerows(cur)
+        rows = cur.fetchall()
+        while len(rows) > 0:
+            o += l
+            cur.execute("select * from {0} limit {1} offset {2}".format(table, l, o))
+            writer.writerows(cur)
+            rows = cur.fetchall()
+
+
+def up2s3(table):
+    s3conn = get_conn_s3()
+    red = s3conn.get_bucket(BUCKET_NAME)
+
+    k = red.new_key(table)
+    k.set_contents_from_filename('%s.csv' % table)
+    info("Uploaded %s to s3" % table)
+
+
+def rds2redshift(table):
+    start = time.time()
+
+    # get the schema of the table
+    columns = None
+    csvtime = None
+    runcsv = None
+    try:
+        with rds_source_engine.connect() as connection:
+            description = connection.execute("describe %s" % table)
+            columns = create_query(description)
+            write2csv(table, connection)
+            csvtime = time.time()
+            runcsv = csvtime - start
+    except StandardError as e:
+        warning("error: {0}".format(e))
+
+    redconn = redshift_engine.connect()
+    redcursor = redconn.cursor()
+
+    up2s3(table)
+    ups3time = time.time()
+    runs3 = ups3time - csvtime
+
+    # create the table with the columns query now generated
+    staging_table = "{0}_staging".format(table)
+    old_table = "{0}_old".format(table)
+    drop_table_if_exists(staging_table, redconn, redcursor)
+
+    info('Creating table {}'.format(staging_table))
+    with redconn:
+        redcursor.execute("CREATE TABLE {0} ({1})".format(staging_table, columns))
+
+    # copy the file that we just uploaded to s3 to redshift
+    try:
+        load_from_s3(
+            redconn,
+            BUCKET_NAME,
+            'rds_sync/{}.csv'.format(table),
+            staging_table,
+            delim="|"
+        )
+    except psycopg2.DatabaseError:
+        # step through the csv we are about to copy over and change the encodings to work properly with redshift
+        info("Error copying, assuming encoding errors and rewriting CSV...")
+
+        with open('%s.csv' % table, 'r') as csvfile:
+            reader = csv.reader(csvfile, delimiter='|')
+            with open('%s2.csv' % table, 'wb') as csvfile2:
+                writer = csv.writer(csvfile2, delimiter='|')
+                keep_going = True
+                while keep_going:
+                    try:
+                        this = reader.next()
+                        new = [i.decode('latin-1').encode('utf-8') for i in this]
+                        writer.writerow(new)
+                    except StopIteration:
+                        keep_going = False
+
+        info("Rewrite complete")
+        os.remove('%s.csv' % table)
+        os.system("mv {0}2.csv {0}.csv".format(table))
+        up2s3(table)
+        # atomicity insurance
+        time.sleep(10)
+        load_from_s3(
+            redconn,
+            BUCKET_NAME,
+            'rds_sync/{}.csv'.format(table),
+            staging_table,
+            delim="|"
+        )
+
+    copytime = time.time()
+    runcopy = copytime - ups3time
+
+    deploy_table(table, staging_table, old_table, redconn)
+
+    endtime = time.time()
+    runswap = endtime - copytime
+    runtotal = endtime - start
+    info("Successfully copied %s from RDS to S3 to Redshift" % table)
+
+    events = [
+        ('write csv', runcsv),
+        ('write to s3', runs3),
+        ('copy from s3 to redshift', runcopy),
+        ('swap redshift tables', runswap),
+        ('complete entire process', runtotal)
+    ]
+    info('|'.join("{0:.2f} seconds to {1}".format(duration, event) for event, duration in events))
+
+
+def cache_aggregate_table(table):
+    s3_key_name = 'redshift_sync/{}'.format(table)
+    with redshift_engine.connect() as connection:
+        unload_to_s3(
+            connection,
+            table,
+            BUCKET_NAME,
+            s3_key_name,
+            delim="|",
+        )
+
+    file_obj = tempfile.NamedTemporaryFile()
+    key_to_local_file(
+        BUCKET_NAME,
+        s3_key_name,
+        file_obj
+    )
+
+    with rds_cache_engine.connect() as connection:
+        connection.execute("""
+            \copy {table} from '{filename}' with DELIMITER '|'
+        """)
