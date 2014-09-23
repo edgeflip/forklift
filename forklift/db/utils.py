@@ -38,10 +38,14 @@ def drop_table(table_name, connection):
     )
 
 
-def get_rowcount(table_name, connection):
+def get_rowcount(table_name, engine=None, connection=None):
+    if engine:
+        connection = engine.connect()
     new_row_result = connection.execute('select count(*) from {}'.format(table_name))
     for row in new_row_result:
         return int(row[0])
+    if engine:
+        connection.close()
 
 
 @contextmanager
