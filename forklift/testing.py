@@ -2,7 +2,7 @@ from unittest import TestCase
 from mock import patch
 from sqlalchemy.orm.session import Session
 from sqlalchemy.engine import Connection
-from forklift.db.base import engine
+from forklift.db.base import redshift_engine as engine
 from forklift.models.base import Base
 
 

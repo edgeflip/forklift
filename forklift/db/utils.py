@@ -5,7 +5,7 @@ import tempfile
 from sqlalchemy.exc import ProgrammingError
 from contextlib import contextmanager
 from forklift.db.base import redshift_engine, rds_source_engine, rds_cache_engine
-from forklift.s3.utils import get_conn_s3, key_to_local_file
+from forklift.s3.utils import key_to_local_file, write_filename_to_key
 from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
 import time
 import os
@@ -73,8 +73,7 @@ def checkout_connection():
         connection.close()
 
 
-# promote a staging table with up-to-date data into production by renaming it
-# however, we move the existing one out of the way first in case something goes wrong
+# promote a staging table with up-to-date data into production by renaming it # however, we move the existing one out of the way first in case something goes wrong
 def deploy_table(table, staging_table, old_table, connection):
     info('Promoting staging table (%s) to production (%s)', staging_table, table)
     drop_table_if_exists(old_table, connection)
@@ -132,6 +131,7 @@ def unload_to_s3(connection, table_name, bucket_name, key_name, delim="\t"):
         access=AWS_ACCESS_KEY,
         secret=AWS_SECRET_KEY,
     ))
+
 
 def get_load_errs(connection):
     # see: http://docs.aws.amazon.com/redshift/latest/dg/r_STL_LOAD_ERRORS.html
@@ -214,16 +214,7 @@ def write2csv(table, cur):
             rows = cur.fetchall()
 
 
-def up2s3(table):
-    s3conn = get_conn_s3()
-    red = s3conn.get_bucket(BUCKET_NAME)
-
-    k = red.new_key(table)
-    k.set_contents_from_filename('%s.csv' % table)
-    info("Uploaded %s to s3" % table)
-
-
-def rds2redshift(table):
+def copy_to_redshift(table):
     start = time.time()
 
     # get the schema of the table
@@ -243,7 +234,7 @@ def rds2redshift(table):
     redconn = redshift_engine.connect()
     redcursor = redconn.cursor()
 
-    up2s3(table)
+    write_filename_to_key(BUCKET_NAME, table)
     ups3time = time.time()
     runs3 = ups3time - csvtime
 
@@ -285,7 +276,7 @@ def rds2redshift(table):
         info("Rewrite complete")
         os.remove('%s.csv' % table)
         os.system("mv {0}2.csv {0}.csv".format(table))
-        up2s3(table)
+        write_filename_to_key(BUCKET_NAME, table)
         # atomicity insurance
         time.sleep(10)
         load_from_s3(
@@ -316,12 +307,12 @@ def rds2redshift(table):
     info('|'.join("{0:.2f} seconds to {1}".format(duration, event) for event, duration in events))
 
 
-def cache_aggregate_table(table):
-    s3_key_name = 'redshift_sync/{}'.format(table)
+def cache_table(staging_table, final_table, old_table):
+    s3_key_name = 'redshift_sync/{}'.format(final_table)
     with redshift_engine.connect() as connection:
         unload_to_s3(
             connection,
-            table,
+            final_table,
             BUCKET_NAME,
             s3_key_name,
             delim="|",
@@ -337,4 +328,8 @@ def cache_aggregate_table(table):
     with rds_cache_engine.connect() as connection:
         connection.execute("""
             \copy {table} from '{filename}' with DELIMITER '|'
-        """)
+        """.format(
+            table=staging_table,
+            filename=file_obj.name
+        ))
+        deploy_table(final_table, staging_table, old_table, connection)

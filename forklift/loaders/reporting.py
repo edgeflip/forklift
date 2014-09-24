@@ -1,4 +1,9 @@
-from forklift.db.utils import deploy_table, drop_table_if_exists, rds2rs
+from forklift.db.utils import (
+    cache_table,
+    copy_to_redshift,
+    deploy_table,
+    drop_table_if_exists,
+)
 import logging
 logger = logging.getLogger(__name__)
 
@@ -99,14 +104,14 @@ def refresh_aggregate_table(connection, table_name, query):
     )
     logger.debug('Calculating aggregates for {}'.format(table_name))
     connection.execute(bound_query)
-    logger.debug('Deploying aggregates to {}'.format(table_name))
+    logger.debug('Deploying {} aggregates to Redshift'.format(table_name))
     deploy_table(
         table_name,
         staging_table,
         old_table_name(table_name),
         connection
     )
-    logger.debug('Done deploying aggregates to {}'.format(table_name))
+    logger.debug('Done deploying {} aggregates to Redshift'.format(table_name))
 
 
 def extract(redshift_engine):
@@ -122,7 +127,7 @@ def extract(redshift_engine):
         ('user_clients', 'user_client_id'),
     ]:
         logger.debug('Uploading {} ..'.format(table))
-        rds2rs(table)
+        copy_to_redshift(table)
         logger.debug('Done.')  # poor man's timer
 
     with redshift_engine.connect() as redshift_connection:
@@ -131,4 +136,9 @@ def extract(redshift_engine):
                 redshift_connection,
                 aggregate_table,
                 aggregate_query
+            )
+            cache_table(
+                staging_table_name(aggregate_table),
+                aggregate_table,
+                old_table_name(aggregate_table)
             )
