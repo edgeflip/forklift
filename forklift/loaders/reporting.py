@@ -3,7 +3,9 @@ from forklift.db.utils import (
     copy_to_redshift,
     deploy_table,
     drop_table_if_exists,
+    get_rowcount,
 )
+from forklift.db.base import redshift_engine
 import logging
 logger = logging.getLogger(__name__)
 
@@ -45,7 +47,6 @@ def metric_expressions():
 
 AGGREGATES = {
     'campaignhourly': """
-        CREATE TABLE {} AS
         SELECT
             root_campaign.campaign_id,
             date_trunc('hour', t.updated) as hour,
@@ -62,7 +63,6 @@ AGGREGATES = {
             GROUP BY root_campaign.campaign_id, hour
     """,
     'campaignrollups': """
-        CREATE TABLE {} AS
         SELECT
             root_campaign.campaign_id,
             {}
@@ -78,7 +78,6 @@ AGGREGATES = {
             GROUP BY root_campaign.campaign_id
     """,
     'clientrollups': """
-        CREATE TABLE {} AS
         SELECT
             client_id,
             {}
@@ -98,12 +97,16 @@ def refresh_aggregate_table(connection, table_name, query):
     staging_table = staging_table_name(table_name)
     drop_table_if_exists(staging_table, connection)
     bound_query = query.format(
-        staging_table,
         metric_expressions(),
         OUR_IP_STRING
     )
+    full_query = 'CREATE TABLE {} AS {}'.format(staging_table, bound_query)
     logger.debug('Calculating aggregates for {}'.format(table_name))
-    connection.execute(bound_query)
+    print full_query
+    with connection.begin():
+        connection.execute(full_query)
+        print get_rowcount('events', connection=connection)
+        print get_rowcount(staging_table, connection=connection)
     logger.debug('Deploying {} aggregates to Redshift'.format(table_name))
     deploy_table(
         table_name,

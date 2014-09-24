@@ -36,4 +36,3 @@ class ForkliftTestCase(TestCase):
             for (fact_key, expected_count) in expected.items():
                 self.assertEqual(row[fact_key], expected_count)
         assert(num_results == 1)
-
