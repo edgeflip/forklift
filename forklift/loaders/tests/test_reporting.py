@@ -2,13 +2,13 @@ import datetime
 from forklift.db.base import redshift_engine
 from forklift.db.utils import drop_table_if_exists, get_rowcount
 from forklift.models.raw import Event
-from unittest import TestCase
 from sqlalchemy.orm.session import Session
 from forklift.models.base import Base
+from forklift.testing import ForkliftTestCase
 
 import forklift.loaders.reporting as reporting
 
-class ReportingTestCase(TestCase):
+class ReportingTestCase(ForkliftTestCase):
 
     def setUp(self):
         super(ReportingTestCase, self).setUp()

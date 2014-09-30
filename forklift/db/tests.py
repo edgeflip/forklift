@@ -1,5 +1,5 @@
 from sqlalchemy.exc import ProgrammingError
-from forklift.testing import ForkliftTestCase
+from forklift.testing import ForkliftTestCase, ForkliftTransactionalTestCase
 from forklift.db.utils import staging_table, load_from_s3, deploy_table, drop_table_if_exists
 from mock import Mock, patch
 from forklift.db.base import redshift_engine
@@ -45,6 +45,8 @@ class DbTestCase(ForkliftTestCase):
         self.assertEqual(drop_table_mock.call_count, 1)
 
 
+
+class StagingTableTestCase(ForkliftTransactionalTestCase):
     def test_staging_table(self):
         real_table = 'test_real_table'
         self.connection.execute('create table {} (col1 integer, col2 integer)'.format(real_table))
@@ -59,4 +61,3 @@ class DbTestCase(ForkliftTestCase):
 
         with self.assertRaises(ProgrammingError):
             self.connection.execute('select * from {}'.format(save_staging_table_name))
-

@@ -11,12 +11,12 @@ from forklift.warehouse.columns import Fact, Dimension
 import forklift.loaders.fact.hourly as loaders
 import forklift.loaders.fbsync as fbsync
 
-from forklift.testing import ForkliftTestCase
+from forklift.testing import ForkliftTransactionalTestCase
 
 import logging
 logger = logging.getLogger(__name__)
 
-class LoaderTestCase(ForkliftTestCase):
+class LoaderTestCase(ForkliftTransactionalTestCase):
 
     @classmethod
     def visitor_templates(cls):
@@ -308,7 +308,7 @@ class EdgeflipLoaderTestCase(LoaderTestCase):
             self.assertSingleResult(expected, result)
 
 
-class FBSyncTestCase(ForkliftTestCase):
+class FBSyncTestCase(ForkliftTransactionalTestCase):
     EXISTING_POST_ID = "54_244"
 
     @classmethod
