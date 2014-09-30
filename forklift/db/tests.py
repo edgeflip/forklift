@@ -1,20 +1,24 @@
 from sqlalchemy.exc import ProgrammingError
 from forklift.testing import ForkliftTestCase
-from forklift.db.utils import staging_table, load_from_s3, deploy_table
+from forklift.db.utils import staging_table, load_from_s3, deploy_table, drop_table_if_exists
 from mock import Mock, patch
+from forklift.db.base import redshift_engine
 
 class DbTestCase(ForkliftTestCase):
     def test_deploy_table(self):
         first_table = 'test1'
         second_table = 'test2'
-        def assert_result_is(result):
-            self.assertSingleResult({'test': result}, self.connection.execute("SELECT * FROM {}".format(first_table)))
+        def assert_result_is(result, connection):
+            self.assertSingleResult({'test': result}, connection.execute("SELECT * FROM {}".format(first_table)))
 
-        self.connection.execute("CREATE TABLE {} AS SELECT 1 AS test".format(first_table))
-        self.connection.execute("CREATE TABLE {} AS SELECT 2 AS test".format(second_table))
-        assert_result_is(1)
-        deploy_table(first_table, second_table, 'test_old', self.connection)
-        assert_result_is(2)
+        with redshift_engine.connect() as connection:
+            drop_table_if_exists(first_table, connection)
+            drop_table_if_exists(first_table, connection)
+            connection.execute("CREATE TABLE {} AS SELECT 1 AS test".format(first_table))
+            connection.execute("CREATE TABLE {} AS SELECT 2 AS test".format(second_table))
+            assert_result_is(1, connection)
+            deploy_table(first_table, second_table, 'test_old', connection)
+            assert_result_is(2, connection)
 
 
     def test_load_from_s3(self):

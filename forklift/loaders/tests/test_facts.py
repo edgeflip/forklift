@@ -590,6 +590,7 @@ class FBSyncTestCase(ForkliftTestCase):
     def test_merge_post_aggregates(self):
         updated_users_table = 'updated'
         with engine.connect() as connection:
+            drop_table_if_exists(updated_users_table, connection)
             connection.execute('truncate {}'.format(fbsync.POST_AGGREGATES_TABLE))
             connection.execute('create table {} (fbid bigint)'.format(updated_users_table))
             connection.execute('insert into {} values (1)'.format(updated_users_table))
@@ -729,6 +730,7 @@ class FBSyncTestCase(ForkliftTestCase):
     def test_merge_poster_aggregates(self):
         updated_users_table = 'updated'
         with engine.connect() as connection:
+            drop_table_if_exists(updated_users_table, connection)
             connection.execute('truncate {}'.format(fbsync.POSTER_AGGREGATES_TABLE))
             connection.execute('create table {} (fbid_poster bigint)'.format(updated_users_table))
             connection.execute('insert into {} values (1)'.format(updated_users_table))

@@ -17,7 +17,7 @@ def staging_table_name(table):
 
 
 def old_table_name(table):
-    return '{}_staging'.format(table)
+    return '{}_old'.format(table)
 
 
 def metric_expressions():
@@ -102,11 +102,8 @@ def refresh_aggregate_table(connection, table_name, query):
     )
     full_query = 'CREATE TABLE {} AS {}'.format(staging_table, bound_query)
     logger.debug('Calculating aggregates for {}'.format(table_name))
-    print full_query
     with connection.begin():
         connection.execute(full_query)
-        print get_rowcount('events', connection=connection)
-        print get_rowcount(staging_table, connection=connection)
     logger.debug('Deploying {} aggregates to Redshift'.format(table_name))
     deploy_table(
         table_name,

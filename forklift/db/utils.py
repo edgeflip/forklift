@@ -75,14 +75,13 @@ def checkout_connection():
 
 # promote a staging table with up-to-date data into production by renaming it # however, we move the existing one out of the way first in case something goes wrong
 def deploy_table(table, staging_table, old_table, connection):
-    print get_rowcount(staging_table, connection=connection)
+    if connection.in_transaction():
+        raise ValueError("Connection used for deploying tables must not already be in a transaction")
     info('Promoting staging table (%s) to production (%s)', staging_table, table)
     drop_table_if_exists(old_table, connection)
 
     # swap the staging table with the real one
-    print 'here', get_rowcount(staging_table, connection=connection)
     with connection.begin() as transaction:
-        print 'here', get_rowcount(staging_table, connection=connection)
         try:
             connection.execute("ALTER TABLE {0} rename to {1}".format(table, old_table))
         except ProgrammingError as e:
@@ -93,7 +92,6 @@ def deploy_table(table, staging_table, old_table, connection):
             else:
                 raise
 
-        print 'here', get_rowcount(staging_table, connection=connection)
         connection.execute("ALTER TABLE {0} rename to {1}".format(staging_table, table))
 
     drop_table_if_exists(old_table, connection)

@@ -1,16 +1,17 @@
 import datetime
 from forklift.db.base import redshift_engine
 from forklift.db.utils import drop_table_if_exists, get_rowcount
-from forklift.testing import ForkliftTestCase
 from forklift.models.raw import Event
+from unittest import TestCase
+from sqlalchemy.orm.session import Session
+from forklift.models.base import Base
 
 import forklift.loaders.reporting as reporting
 
-class ReportingTestCase(ForkliftTestCase):
+class ReportingTestCase(TestCase):
+
     def setUp(self):
-        print "here"
         super(ReportingTestCase, self).setUp()
-        print "am i here"
         timestamp = datetime.datetime(2014,2,1,2,0)
         event = Event(
             event_type='stuff',
@@ -20,11 +21,15 @@ class ReportingTestCase(ForkliftTestCase):
             updated=timestamp,
             event_datetime=timestamp,
         )
+        self.connection = redshift_engine.connect()
+        Base.metadata.create_all(redshift_engine)
+        self.session = Session(self.connection)
         self.session.add(event)
         self.session.commit()
-        hi = self.connection.execute('select count(*) from events');
-        for h in hi:
-            print 'hi', h
+
+    def tearDown(self):
+        self.connection.execute('delete from events');
+        self.connection.close()
 
     def test_refresh_aggregate_table(self):
         test_query = 'select count(*) as ec from events'
