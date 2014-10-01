@@ -4,7 +4,6 @@ import psycopg2
 import tempfile
 from sqlalchemy.exc import ProgrammingError
 from contextlib import contextmanager
-from forklift.db.base import redshift_engine, rds_source_engine, rds_cache_engine
 from forklift.s3.utils import key_to_local_file, write_filename_to_key
 from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
 import time
@@ -154,7 +153,7 @@ def get_load_errs(connection):
 # Amazon recommends that you run them both after adding or deleting rows
 # to help query speeds
 # Needs to be run outside of a transaction
-def optimize(table, logger):
+def optimize(table, logger, redshift_engine):
     conn = redshift_engine.raw_connection()
     old_iso_level = conn.isolation_level
     conn.set_isolation_level(0)
@@ -191,12 +190,25 @@ def mysql_redshift_column_map(val):
     out = redshift_vals[val.split('(')[0]]
     return out
 
+def postgres_column_formatter(datatype, char_length):
+    if datatype is 'varchar':
+        return "{}({})".format(datatype, char_length)
+    else:
+        return datatype
 
-def create_query(description):
+
+def postgres_columns_from_mysql(description):
     return ','.join(
         ' '.join(
             [ columnname, mysql_redshift_column_map(datatype) ]
         ) for (columnname, datatype) in description
+    )
+
+def postgres_columns_from_postgres(description):
+    return ','.join(
+        ' '.join(
+            [ columnname, postgres_column_formatter(datatype, character_max) ]
+        ) for (columnname, datatype, character_max) in description
     )
 
 
@@ -216,7 +228,7 @@ def write2csv(table, cur):
             rows = cur.fetchall()
 
 
-def copy_to_redshift(table):
+def copy_to_redshift(rds_source_engine, redshift_engine, table):
     start = time.time()
 
     # get the schema of the table
@@ -226,7 +238,7 @@ def copy_to_redshift(table):
     try:
         with rds_source_engine.connect() as connection:
             description = connection.execute("describe %s" % table)
-            columns = create_query(description)
+            columns = postgres_columns_from_mysql(description)
             write2csv(table, connection)
             csvtime = time.time()
             runcsv = csvtime - start
@@ -309,7 +321,18 @@ def copy_to_redshift(table):
     info('|'.join("{0:.2f} seconds to {1}".format(duration, event) for event, duration in events))
 
 
-def cache_table(staging_table, final_table, old_table):
+def copy_from_file(engine, table, file_obj, delim):
+    connection = engine.raw_connection()
+    cursor = connection.cursor()
+    cursor.copy_expert(
+        "copy {} from STDIN with DELIMITER '{}'".format(table, delim),
+        file_obj
+    )
+    cursor.close()
+    connection.commit()
+    connection.close()
+
+def cache_table(redshift_engine, cache_engine, staging_table, final_table, old_table, delim):
     s3_key_name = 'redshift_sync/{}'.format(final_table)
     with redshift_engine.connect() as connection:
         unload_to_s3(
@@ -317,8 +340,18 @@ def cache_table(staging_table, final_table, old_table):
             final_table,
             BUCKET_NAME,
             s3_key_name,
-            delim="|",
+            delim,
         )
+        result = connection.execute("""
+            SELECT
+                column_name,
+                data_type,
+                character_maximum_length
+            FROM information_schema.columns
+            WHERE table_name='{table}'
+            ORDER BY ordinal_position
+        """.format(table=final_table))
+        columns = postgres_columns_from_postgres(result)
 
     file_obj = tempfile.NamedTemporaryFile()
     key_to_local_file(
@@ -327,11 +360,16 @@ def cache_table(staging_table, final_table, old_table):
         file_obj
     )
 
-    with rds_cache_engine.connect() as connection:
-        connection.execute("""
-            \copy {table} from '{filename}' with DELIMITER '|'
-        """.format(
-            table=staging_table,
-            filename=file_obj.name
-        ))
+    with cache_engine.connect() as connection:
+        drop_table_if_exists(staging_table, connection)
+        connection.execute("CREATE TABLE {0} ({1})".format(staging_table, columns))
+
+    copy_from_file(
+        cache_engine,
+        staging_table,
+        file_obj,
+        delim
+    )
+
+    with cache_engine.connect() as connection:
         deploy_table(final_table, staging_table, old_table, connection)

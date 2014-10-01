@@ -3,9 +3,7 @@ from forklift.db.utils import (
     copy_to_redshift,
     deploy_table,
     drop_table_if_exists,
-    get_rowcount,
 )
-from forklift.db.base import redshift_engine
 import logging
 logger = logging.getLogger(__name__)
 
@@ -93,6 +91,17 @@ AGGREGATES = {
 }
 
 
+RAW_TABLES = {
+    'visits': 'visit_id',
+    'visitors': 'visitor_id',
+    'campaigns': 'campaign_id',
+    'events': 'event_id',
+    'clients': 'client_id',
+    'campaign_properties': 'campaign_property_id',
+    'user_clients': 'user_client_id',
+}
+
+
 def refresh_aggregate_table(connection, table_name, query):
     staging_table = staging_table_name(table_name)
     drop_table_if_exists(staging_table, connection)
@@ -100,10 +109,10 @@ def refresh_aggregate_table(connection, table_name, query):
         metric_expressions(),
         OUR_IP_STRING
     )
-    full_query = 'CREATE TABLE {} AS {}'.format(staging_table, bound_query)
+    full_statement = 'CREATE TABLE {} AS {}'.format(staging_table, bound_query)
     logger.debug('Calculating aggregates for {}'.format(table_name))
     with connection.begin():
-        connection.execute(full_query)
+        connection.execute(full_statement)
     logger.debug('Deploying {} aggregates to Redshift'.format(table_name))
     deploy_table(
         table_name,
@@ -114,31 +123,22 @@ def refresh_aggregate_table(connection, table_name, query):
     logger.debug('Done deploying {} aggregates to Redshift'.format(table_name))
 
 
-def extract(redshift_engine):
-    """ main for syncing with RDS """
+def process(rds_source_engine, redshift_engine, cache_engine, delim='|'):
+    for table, table_id in RAW_TABLES.iteritems():
+        copy_to_redshift(rds_source_engine, redshift_engine, table)
 
-    for table, table_id in [
-        ('visits', 'visit_id'),
-        ('visitors', 'visitor_id'),
-        ('campaigns', 'campaign_id'),
-        ('events', 'event_id'),
-        ('clients', 'client_id'),
-        ('campaign_properties', 'campaign_property_id'),
-        ('user_clients', 'user_client_id'),
-    ]:
-        logger.debug('Uploading {} ..'.format(table))
-        copy_to_redshift(table)
-        logger.debug('Done.')  # poor man's timer
-
-    with redshift_engine.connect() as redshift_connection:
-        for (aggregate_table, aggregate_query) in AGGREGATES:
+    for (aggregate_table, aggregate_query) in AGGREGATES.iteritems():
+        with redshift_engine.connect() as redshift_connection:
             refresh_aggregate_table(
                 redshift_connection,
                 aggregate_table,
                 aggregate_query
             )
-            cache_table(
-                staging_table_name(aggregate_table),
-                aggregate_table,
-                old_table_name(aggregate_table)
-            )
+        cache_table(
+            redshift_engine,
+            cache_engine,
+            staging_table_name(aggregate_table),
+            aggregate_table,
+            old_table_name(aggregate_table),
+            delim
+        )
