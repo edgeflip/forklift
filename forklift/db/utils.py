@@ -2,7 +2,7 @@ from logging import debug, info
 from sqlalchemy.exc import ProgrammingError
 from contextlib import closing, contextmanager
 from forklift.db.base import engine
-from forklift.settings import AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
 
 
 DOES_NOT_EXIST_MESSAGE_TEMPLATE = '"{0}" does not exist'
@@ -38,10 +38,14 @@ def drop_table(table_name, connection):
     )
 
 
-def get_rowcount(table_name, connection):
+def get_rowcount(table_name, engine=None, connection=None):
+    if engine:
+        connection = engine.connect()
     new_row_result = connection.execute('select count(*) from {}'.format(table_name))
     for row in new_row_result:
         return int(row[0])
+    if engine:
+        connection.close()
 
 
 @contextmanager
@@ -93,14 +97,14 @@ def load_from_s3(connection, bucket_name, key_name, table_name, delim="\t", crea
         connection.execute("""
             COPY {table} FROM 's3://{bucket}/{key}'
             CREDENTIALS 'aws_access_key_id={access};aws_secret_access_key={secret}'
-            DELIMITER '{delim}' TRUNCATECOLUMNS ACCEPTINVCHARS NULL AS '\000' IGNOREBLANKLINES
+            DELIMITER '{delim}' TRUNCATECOLUMNS ACCEPTINVCHARS NULL AS '\\000' IGNOREBLANKLINES
         """.format(
                 delim=delim,
                 table=table_name,
                 bucket=bucket_name,
                 key=key_name,
-                access=AWS_ACCESS_KEY_ID,
-                secret=AWS_SECRET_ACCESS_KEY,
+                access=AWS_ACCESS_KEY,
+                secret=AWS_SECRET_KEY,
             )
         )
     except ProgrammingError as e:
@@ -126,7 +130,17 @@ def get_load_errs(connection):
 # http://docs.aws.amazon.com/redshift/latest/dg/r_ANALYZE.html
 # Amazon recommends that you run them both after adding or deleting rows
 # to help query speeds
-def optimize(table, connection):
-    connection.execute("VACUUM {}".format(table))
-    connection.execute("ANALYZE {}".format(table))
-
+# Needs to be run outside of a transaction
+def optimize(table, logger):
+    conn = engine.raw_connection()
+    old_iso_level = conn.isolation_level
+    conn.set_isolation_level(0)
+    curs = conn.cursor()
+    logger.info('vacuuming {}'.format(table))
+    curs.execute('vacuum {}'.format(table))
+    logger.info('vacuum of {} complete'.format(table))
+    logger.info('analyzing {}'.format(table))
+    curs.execute('analyze {}'.format(table))
+    logger.info('analysis of {} complete'.format(table))
+    conn.set_isolation_level(old_iso_level)
+    conn.close()

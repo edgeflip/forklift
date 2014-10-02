@@ -2,3 +2,10 @@ python-dev
 build-essential
 virtualenvwrapper
 libpq-dev
+python-setuptools
+python-numpy
+python-scipy
+libatlas-dev
+libatlas-base-dev
+liblapack-dev
+gfortran

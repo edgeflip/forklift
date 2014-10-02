@@ -73,6 +73,9 @@ LOGGING = {
         'grackle': {
             'level': 'DEBUG',
         },
+        '__main__': {
+            'handlers': ['console'],
+        }
     }
 }
 
@@ -95,3 +98,4 @@ FBID_SLUG = 'fbid'
 VISIT_SLUG = 'visit'
 FRIEND_SLUG = 'friend_fbid'
 MISC_SLUG = 'misc'
+
