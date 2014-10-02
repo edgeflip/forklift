@@ -63,9 +63,6 @@ class ReportingTestCase(ForkliftTestCase):
             'events': 'event_id',
         }
 
-        def fake_rs_to_s3(connection, table_name, bucket_name, key_name, delim="\t"):
-            pass
-
         def fake_s3_to_fs(bucket_name, s3_key_name, file_obj):
             from_curs = redshift_engine.raw_connection().cursor()
             from_curs.copy_expert(
@@ -75,7 +72,6 @@ class ReportingTestCase(ForkliftTestCase):
             file_obj.seek(0, os.SEEK_SET)
 
 
-        rs_to_s3_mock.side_effect = fake_rs_to_s3
         s3_to_fs_mock.side_effect = fake_s3_to_fs
 
         reporting.process(rds_source_engine, redshift_engine, rds_cache_engine)

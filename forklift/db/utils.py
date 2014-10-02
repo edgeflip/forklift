@@ -5,7 +5,7 @@ import tempfile
 from sqlalchemy.exc import ProgrammingError
 from contextlib import contextmanager
 from forklift.s3.utils import key_to_local_file, write_file_to_key
-from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
+from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY, rds_source_config, redshift_config
 import time
 
 BUCKET_NAME = 'warehouse-forklift'
@@ -14,12 +14,7 @@ DOES_NOT_EXIST_MESSAGE_TEMPLATE = '"{0}" does not exist'
 
 
 def table_exists(table, connection):
-    result = connection.execute("""
-        select 1
-        from information_schema.tables
-        where table_name = '{}'
-    """.format(table))
-    return result.first() is not None
+    return table in connection.engine.table_names()
 
 
 # no 'drop table if exists', so just swallow the error
@@ -161,7 +156,7 @@ def optimize(table, logger, redshift_engine):
     conn.close()
 
 
-def mysql_redshift_column_map(datatype, max_chars):
+def mysql_to_postgres_column_map(datatype, max_chars):
     redshift_vals = {
         'int' : 'integer',
         'mediumint': 'bigint',
@@ -179,30 +174,14 @@ def mysql_redshift_column_map(datatype, max_chars):
         'longtext': 'varchar',  # .. really magic
         }
 
-
     out = redshift_vals[datatype]
     return out
 
-def postgres_column_formatter(datatype, char_length):
+def postgres_to_postgres_column_map(datatype, char_length):
     if datatype is 'varchar':
         return "{}({})".format(datatype, char_length)
     else:
         return datatype
-
-
-def postgres_columns_from_mysql(description):
-    return ','.join(
-        ' '.join(
-            [ columnname, mysql_redshift_column_map(datatype, max_characters) ]
-        ) for (columnname, datatype, max_characters) in description
-    )
-
-def postgres_columns_from_postgres(description):
-    return ','.join(
-        ' '.join(
-            [ columnname, postgres_column_formatter(datatype, character_max) ]
-        ) for (columnname, datatype, character_max) in description
-    )
 
 
 def write2csv(table, connection, file_obj, delim):
@@ -220,6 +199,28 @@ def write2csv(table, connection, file_obj, delim):
         writer.writerows(rows)
 
 
+def get_columns(table, schema, connection, formatter):
+    # TODO: add this to the engine itself so we don't have to do a name check
+    if connection.engine.name == 'postgresql':
+        db_key = 'table_catalog'
+    else:
+        db_key = 'table_schema'
+
+    results = connection.execute("""
+        select
+            column_name,
+            data_type,
+            character_maximum_length
+        from information_schema.columns
+        where table_name = '{}' and {} = '{}'
+    """.format(table, db_key, schema))
+
+    return ','.join(
+        ' '.join(
+            [ columnname, formatter(datatype, character_max) ]
+        ) for (columnname, datatype, character_max) in results
+    )
+
 def copy_to_redshift(rds_source_engine, redshift_engine, staging_table, final_table, old_table, delim):
     start = time.time()
     file_obj = tempfile.NamedTemporaryFile()
@@ -229,17 +230,13 @@ def copy_to_redshift(rds_source_engine, redshift_engine, staging_table, final_ta
     csvtime = None
     runcsv = None
 
-
     with rds_source_engine.connect() as connection:
-        description = connection.execute("""
-            select
-                column_name,
-                data_type,
-                character_maximum_length
-            from information_schema.columns
-            where table_name = '{}'
-        """.format(final_table))
-        columns = postgres_columns_from_mysql(description)
+        columns = get_columns(
+            final_table,
+            rds_source_config['db'],
+            connection,
+            mysql_to_postgres_column_map
+        )
         write2csv(final_table, connection, file_obj, delim)
         csvtime = time.time()
         runcsv = csvtime - start
@@ -330,16 +327,12 @@ def cache_table(redshift_engine, cache_engine, staging_table, final_table, old_t
             s3_key_name,
             delim,
         )
-        result = connection.execute("""
-            SELECT
-                column_name,
-                data_type,
-                character_maximum_length
-            FROM information_schema.columns
-            WHERE table_name='{table}'
-            ORDER BY ordinal_position
-        """.format(table=final_table))
-        columns = postgres_columns_from_postgres(result)
+        columns = get_columns(
+            final_table,
+            redshift_config['db'],
+            connection,
+            postgres_to_postgres_column_map
+        )
 
     file_obj = tempfile.NamedTemporaryFile()
     key_to_local_file(
