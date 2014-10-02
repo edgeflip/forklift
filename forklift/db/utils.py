@@ -177,6 +177,7 @@ def mysql_to_postgres_column_map(datatype, max_chars):
     out = redshift_vals[datatype]
     return out
 
+
 def postgres_to_postgres_column_map(datatype, char_length):
     if datatype is 'varchar':
         return "{}({})".format(datatype, char_length)
@@ -217,9 +218,10 @@ def get_columns(table, schema, connection, formatter):
 
     return ','.join(
         ' '.join(
-            [ columnname, formatter(datatype, character_max) ]
+            [columnname, formatter(datatype, character_max)]
         ) for (columnname, datatype, character_max) in results
     )
+
 
 def copy_to_redshift(rds_source_engine, redshift_engine, staging_table, final_table, old_table, delim):
     start = time.time()
@@ -316,6 +318,7 @@ def copy_from_file(engine, table, file_obj, delim):
     cursor.close()
     connection.commit()
     connection.close()
+
 
 def cache_table(redshift_engine, cache_engine, staging_table, final_table, old_table, delim):
     s3_key_name = 'redshift_sync/{}'.format(final_table)
