@@ -102,30 +102,38 @@ RAW_TABLES = {
 }
 
 
-def refresh_aggregate_table(connection, table_name, query):
-    staging_table = staging_table_name(table_name)
-    drop_table_if_exists(staging_table, connection)
-    bound_query = query.format(
-        metric_expressions(),
-        OUR_IP_STRING
-    )
-    full_statement = 'CREATE TABLE {} AS {}'.format(staging_table, bound_query)
-    logger.debug('Calculating aggregates for {}'.format(table_name))
-    with connection.begin():
-        connection.execute(full_statement)
+def refresh_aggregate_table(engine, table_name, query):
+    with engine.connect() as connection:
+        staging_table = staging_table_name(table_name)
+        drop_table_if_exists(staging_table, connection)
+        bound_query = query.format(
+            metric_expressions(),
+            OUR_IP_STRING
+        )
+        full_statement = 'CREATE TABLE {} AS {}'.format(staging_table, bound_query)
+        logger.debug('Calculating aggregates for {}'.format(table_name))
+        with connection.begin():
+            connection.execute(full_statement)
     logger.debug('Deploying {} aggregates to Redshift'.format(table_name))
     deploy_table(
         table_name,
         staging_table,
         old_table_name(table_name),
-        connection
+        engine
     )
     logger.debug('Done deploying {} aggregates to Redshift'.format(table_name))
 
 
 def process(rds_source_engine, redshift_engine, cache_engine, delim='|'):
     for table, table_id in RAW_TABLES.iteritems():
-        copy_to_redshift(rds_source_engine, redshift_engine, table)
+        copy_to_redshift(
+            rds_source_engine,
+            redshift_engine,
+            staging_table_name(table),
+            table,
+            old_table_name(table),
+            delim
+        )
 
     for (aggregate_table, aggregate_query) in AGGREGATES.iteritems():
         with redshift_engine.connect() as redshift_connection:

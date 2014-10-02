@@ -205,7 +205,7 @@ def setup_db(env=None, force='0'):
     sql_path = join(BASEDIR, 'forklift', 'sql')
     redshift_context = {'DATABASE': 'forklift', 'USER': 'redshift', 'PASSWORD': 'root'}
     cache_context = {'DATABASE': 'reporting', 'USER': 'edgeflip', 'PASSWORD': 'root'}
-    source_context = {'DATABASE': 'edgeflip', 'USER': 'edgeflip', 'PASSWORD': 'root'}
+    source_context = {'DATABASE': 'rds_source', 'USER': 'bookworm', 'PASSWORD': 'root'}
 
     if 'dev' in roles:
         if true(force):

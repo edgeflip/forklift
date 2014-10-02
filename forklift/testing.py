@@ -16,7 +16,7 @@ class ForkliftTestCase(TestCase):
             num_results += 1
             for (fact_key, expected_count) in expected.items():
                 self.assertEqual(row[fact_key], expected_count)
-        assert(num_results == 1)
+        self.assertEquals(num_results, 1)
 
 # The standard test case, run the whole thing in a nested transaction
 # and roll back at the end

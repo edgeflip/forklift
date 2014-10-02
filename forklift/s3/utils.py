@@ -80,6 +80,14 @@ def key_to_local_file(bucket_name, s3_key_name, file_obj):
     key.get_contents_to_file(file_obj)
 
 
+def write_file_to_key(bucket_name, key, file_obj):
+    s3conn = get_conn_s3()
+    red = s3conn.get_bucket(bucket_name)
+    k = red.new_key(key)
+    k.set_contents_from_file(file_obj)
+    logger.info("Uploaded %s to s3" % key)
+
+
 def write_filename_to_key(bucket_name, filename):
     s3conn = get_conn_s3()
     red = s3conn.get_bucket(bucket_name)
