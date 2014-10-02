@@ -73,21 +73,17 @@ class StagingTableTestCase(ForkliftTransactionalTestCase):
         def fake_write(bucket_name, key_name, file_obj):
             file_obj.seek(0, os.SEEK_SET)
             contents = file_obj.read()
-            print "writing contents = ", contents
             self.s3_writes["{}/{}".format(bucket_name, key_name)] = contents
             file_obj.seek(0, os.SEEK_SET)
 
         def fake_load(connection, bucket_name, key_name, table_name, delimiter):
             contents = self.s3_writes["{}/{}".format(bucket_name, key_name)]
-            print "contents = ", contents
             file_obj = tempfile.NamedTemporaryFile()
             file_obj.write(contents)
             file_obj.seek(0, os.SEEK_SET)
             from_curs = redshift_engine.raw_connection().cursor()
-            string = "COPY {} FROM STDIN with DELIMITER '{}'".format(table_name, delimiter)
-            print string
             from_curs.copy_expert(
-                string,
+                "COPY {} FROM STDIN with DELIMITER '{}'".format(table_name, delimiter),
                 file_obj
             )
 
