@@ -1,23 +1,26 @@
-from logging import debug, info
+import csv
+from logging import debug, info, warning
+import psycopg2
+import tempfile
 from sqlalchemy.exc import ProgrammingError
-from contextlib import closing, contextmanager
-from forklift.db.base import engine
-from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
+from contextlib import contextmanager
+from forklift.s3.utils import key_to_local_file, write_file_to_key
+from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY, rds_source_config, redshift_config
+import time
 
+BUCKET_NAME = 'warehouse-forklift'
 
 DOES_NOT_EXIST_MESSAGE_TEMPLATE = '"{0}" does not exist'
 
+
+def table_exists(table, connection):
+    return table in connection.engine.table_names()
+
+
 # no 'drop table if exists', so just swallow the error
 def drop_table_if_exists(table, connection):
-    try:
-        with connection.begin():
-            debug('Dropping table %s', table)
-            connection.execute("DROP TABLE {0}".format(table))
-    except ProgrammingError as e:
-        if DOES_NOT_EXIST_MESSAGE_TEMPLATE.format(table) in str(e):
-            debug("Table %s did not exist, so no dropping was necessary.", table)
-        else:
-            raise
+    if table_exists(table, connection):
+        connection.execute("DROP TABLE {0}".format(table))
 
 
 def create_new_table(new_table_name, target_table_name, connection, temp=False):
@@ -68,25 +71,17 @@ def checkout_connection():
 
 # promote a staging table with up-to-date data into production by renaming it
 # however, we move the existing one out of the way first in case something goes wrong
-def deploy_table(table, staging_table, old_table, connection):
-    info('Promoting staging table (%s) to production (%s)', staging_table, table)
-    drop_table_if_exists(old_table, connection)
+def deploy_table(table, staging_table, old_table, engine):
+    with engine.connect() as connection:
+        info('Promoting staging table (%s) to production (%s)', staging_table, table)
+        drop_table_if_exists(old_table, connection)
 
-    # swap the staging table with the real one
-    with connection.begin() as transaction:
-        try:
+        # swap the staging table with the real one
+        if table_exists(table, connection):
             connection.execute("ALTER TABLE {0} rename to {1}".format(table, old_table))
-        except ProgrammingError as e:
-            if DOES_NOT_EXIST_MESSAGE_TEMPLATE.format(table) in str(e):
-                info("Table %s did not exist, so no renaming was necessary.", table)
-                # roll back the transaction so the second alter can still commence
-                transaction.rollback()
-            else:
-                raise
 
         connection.execute("ALTER TABLE {0} rename to {1}".format(staging_table, table))
-
-    drop_table_if_exists(old_table, connection)
+        drop_table_if_exists(old_table, connection)
 
 
 def load_from_s3(connection, bucket_name, key_name, table_name, delim="\t", create_statement=None):
@@ -107,9 +102,24 @@ def load_from_s3(connection, bucket_name, key_name, table_name, delim="\t", crea
                 secret=AWS_SECRET_KEY,
             )
         )
-    except ProgrammingError as e:
+    except ProgrammingError:
         info("error loading: \n %s", get_load_errs(connection))
         raise
+
+
+def unload_to_s3(connection, table_name, bucket_name, key_name, delim="\t"):
+    connection.execute("""
+        UNLOAD ('select * from {table}') TO 's3://{bucket}/{key}'
+        CREDENTIALS 'aws_access_key_id={access};aws_secret_access_key={secret}'
+        DELIMITER '{delim}'
+    """.format(
+        delim=delim,
+        table=table_name,
+        bucket=bucket_name,
+        key=key_name,
+        access=AWS_ACCESS_KEY,
+        secret=AWS_SECRET_KEY,
+    ))
 
 
 def get_load_errs(connection):
@@ -131,8 +141,8 @@ def get_load_errs(connection):
 # Amazon recommends that you run them both after adding or deleting rows
 # to help query speeds
 # Needs to be run outside of a transaction
-def optimize(table, logger):
-    conn = engine.raw_connection()
+def optimize(table, logger, redshift_engine):
+    conn = redshift_engine.raw_connection()
     old_iso_level = conn.isolation_level
     conn.set_isolation_level(0)
     curs = conn.cursor()
@@ -144,3 +154,205 @@ def optimize(table, logger):
     logger.info('analysis of {} complete'.format(table))
     conn.set_isolation_level(old_iso_level)
     conn.close()
+
+
+def mysql_to_postgres_column_map(datatype, max_chars):
+    redshift_vals = {
+        'int' : 'integer',
+        'mediumint': 'bigint',
+        'tinyint': 'integer',
+        'bigint' : 'bigint',
+        'decimal' : 'decimal',
+        'real' : 'real',
+        'double precision' : 'double precision',
+        'boolean' : 'boolean',
+        'char' : 'char(50)',  # ehhh.. this is usually ips
+        'varchar' : 'varchar(1028)',
+        'date' : 'date',
+        'timestamp': 'timestamp',
+        'datetime': 'timestamp',  # kinda magic
+        'longtext': 'varchar',  # .. really magic
+        }
+
+    out = redshift_vals[datatype]
+    return out
+
+
+def postgres_to_postgres_column_map(datatype, char_length):
+    if datatype is 'varchar':
+        return "{}({})".format(datatype, char_length)
+    else:
+        return datatype
+
+
+def write2csv(table, connection, file_obj, delim):
+    debug('Creating CSV for {}'.format(table))
+    l = 20000
+    o = 0
+    result = connection.execute("select * from {0} limit {1} offset {2}".format(table, l, o))
+    writer = csv.writer(file_obj, delimiter=delim)
+    rows = result.fetchall()
+    writer.writerows(rows)
+    while len(rows) > 0:
+        o += l
+        result = connection.execute("select * from {0} limit {1} offset {2}".format(table, l, o))
+        rows = result.fetchall()
+        writer.writerows(rows)
+
+
+def get_columns(table, schema, connection, formatter):
+    # TODO: add this to the engine itself so we don't have to do a name check
+    if connection.engine.name == 'postgresql':
+        db_key = 'table_catalog'
+    else:
+        db_key = 'table_schema'
+
+    results = connection.execute("""
+        select
+            column_name,
+            data_type,
+            character_maximum_length
+        from information_schema.columns
+        where table_name = '{}' and {} = '{}'
+    """.format(table, db_key, schema))
+
+    return ','.join(
+        ' '.join(
+            [columnname, formatter(datatype, character_max)]
+        ) for (columnname, datatype, character_max) in results
+    )
+
+
+def copy_to_redshift(rds_source_engine, redshift_engine, staging_table, final_table, old_table, delim):
+    start = time.time()
+    file_obj = tempfile.NamedTemporaryFile()
+
+    # get the schema of the table
+    columns = None
+    csvtime = None
+    runcsv = None
+
+    with rds_source_engine.connect() as connection:
+        columns = get_columns(
+            final_table,
+            rds_source_config['db'],
+            connection,
+            mysql_to_postgres_column_map
+        )
+        write2csv(final_table, connection, file_obj, delim)
+        csvtime = time.time()
+        runcsv = csvtime - start
+
+    key_name = "rds_sync/{}.csv".format(final_table)
+
+    write_file_to_key(BUCKET_NAME, key_name, file_obj)
+    ups3time = time.time()
+    runs3 = ups3time - csvtime
+
+    # create the table with the columns query now generated
+    info('Creating table {}'.format(staging_table))
+    with redshift_engine.connect() as connection:
+        drop_table_if_exists(staging_table, connection)
+        connection.execute("CREATE TABLE {0} ({1})".format(staging_table, columns))
+
+        # copy the file that we just uploaded to s3 to redshift
+        try:
+            load_from_s3(
+                connection,
+                BUCKET_NAME,
+                key_name,
+                staging_table,
+                delim
+            )
+        except psycopg2.DatabaseError:
+            # step through the csv we are about to copy over and change the encodings to work properly with redshift
+            warning("Error copying, assuming encoding errors and rewriting CSV...")
+
+            reader = csv.reader(file_obj, delimiter=delim)
+            converted_file = tempfile.NamedTemporaryFile()
+            writer = csv.writer(converted_file, delimiter=delim)
+            keep_going = True
+            while keep_going:
+                try:
+                    this = reader.next()
+                    new = [i.decode('latin-1').encode('utf-8') for i in this]
+                    writer.writerow(new)
+                except StopIteration:
+                    keep_going = False
+
+            info("Rewrite complete")
+            write_file_to_key(BUCKET_NAME, key_name, converted_file)
+            load_from_s3(
+                connection,
+                BUCKET_NAME,
+                key_name,
+                staging_table,
+                delim
+            )
+
+        copytime = time.time()
+        runcopy = copytime - ups3time
+    deploy_table(final_table, staging_table, old_table, redshift_engine)
+    endtime = time.time()
+    runswap = endtime - copytime
+    runtotal = endtime - start
+    info("Successfully copied %s from RDS to S3 to Redshift" % final_table)
+
+    events = [
+        ('write csv', runcsv),
+        ('write to s3', runs3),
+        ('copy from s3 to redshift', runcopy),
+        ('swap redshift tables', runswap),
+        ('complete entire process', runtotal)
+    ]
+    info('|'.join("{0:.2f} seconds to {1}".format(duration, event) for event, duration in events))
+
+
+def copy_from_file(engine, table, file_obj, delim):
+    connection = engine.raw_connection()
+    cursor = connection.cursor()
+    cursor.copy_expert(
+        "copy {} from STDIN with DELIMITER '{}'".format(table, delim),
+        file_obj
+    )
+    cursor.close()
+    connection.commit()
+    connection.close()
+
+
+def cache_table(redshift_engine, cache_engine, staging_table, final_table, old_table, delim):
+    s3_key_name = 'redshift_sync/{}'.format(final_table)
+    with redshift_engine.connect() as connection:
+        unload_to_s3(
+            connection,
+            final_table,
+            BUCKET_NAME,
+            s3_key_name,
+            delim,
+        )
+        columns = get_columns(
+            final_table,
+            redshift_config['db'],
+            connection,
+            postgres_to_postgres_column_map
+        )
+
+    file_obj = tempfile.NamedTemporaryFile()
+    key_to_local_file(
+        BUCKET_NAME,
+        s3_key_name,
+        file_obj
+    )
+
+    with cache_engine.connect() as connection:
+        drop_table_if_exists(staging_table, connection)
+        connection.execute("CREATE TABLE {0} ({1})".format(staging_table, columns))
+
+    copy_from_file(
+        cache_engine,
+        staging_table,
+        file_obj,
+        delim
+    )
+
+    deploy_table(final_table, staging_table, old_table, cache_engine)

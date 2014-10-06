@@ -152,10 +152,43 @@ def install_reqs(env=None):
             ))
 
 
+def initialize_postgres(sql_context):
+    # Database initialization
+    role_exists = l(
+        'sudo -u postgres psql -tAc "select 1 from pg_roles where rolname=\'{USER}\'"'.format(**sql_context),
+        capture=True,
+    )
+    if not role_exists:
+        l('sudo -u postgres psql -c "create role {USER} with nosuperuser createdb nocreaterole login password \'{PASSWORD}\';"'.format(**sql_context))
+
+    database_exists = l(
+        'sudo -u postgres psql -tAc  "select 1 from pg_database where datname=\'{DATABASE}\'"'.format(**sql_context),
+        capture=True
+    )
+    if not database_exists:
+        l('sudo -u postgres psql -c "create database {DATABASE} with owner={USER} template=template0 encoding=\'utf-8\'"'.format(**sql_context))
+
+def initialize_mysql(sql_context, sql_path):
+    password = None
+
+    # Database initialization
+    setup_sql = open(join(sql_path, 'setup_mysql.sql')).read()
+    setup_prepped = setup_sql.format(**sql_context)
+    if password is None:
+        l('mysql --user=root -p --execute="{}"'.format(setup_prepped))
+    else:
+        l('mysql --user=root --password={} --execute="{}"'.format(
+            password,
+            setup_prepped,
+        ))
+
 
 @fab.task(name='db')
-def setup_db(env=None, force='0', testdata='1'):
-    """Initialize a redshift (postgresql) database
+def setup_db(env=None, force='0'):
+    """Initialize all forklift test databases:
+        RDS source (mysql)
+        Redshift (postgres)
+        RDS cache (postgres)
 
     Requires that a virtual environment has been created, and is either
     already activated, or specified, e.g.:
@@ -167,39 +200,34 @@ def setup_db(env=None, force='0', testdata='1'):
 
         db:force=[1|true|yes|y]
 
-    In development, a test data fixture is loaded into the database by default; disable
-    this by specifying "testdata":
-
-        db:testdata=[0|false|no|n]
-
     """
     roles = fab.env.roles or ['dev']
     sql_path = join(BASEDIR, 'forklift', 'sql')
-    sql_context = {'DATABASE': 'forklift', 'USER': 'redshift', 'PASSWORD': 'root'}
+    redshift_context = {'DATABASE': 'forklift', 'USER': 'redshift', 'PASSWORD': 'root'}
+    cache_context = {'DATABASE': 'reporting', 'USER': 'edgeflip', 'PASSWORD': 'root'}
+    source_context = {'DATABASE': 'rds_source', 'USER': 'bookworm', 'PASSWORD': 'root'}
 
-    # Database teardown
     if 'dev' in roles:
         if true(force):
+            # tear down
             teardown_commands = open(join(sql_path, 'teardown.sql')).read().split(';')
             for command in teardown_commands:
-                l('sudo -u postgres psql --command="{}"'.format(
-                    command.strip().format(**sql_context),
+                postgres_unbound = 'sudo -u postgres psql --command="{}"'.format(command.strip())
+                l(postgres_unbound.format(**redshift_context))
+                l(postgres_unbound.format(**cache_context))
+                l('mysql --user=root --password={} --execute="{}"'.format(
+                    source_context['PASSWORD'],
+                    command.format(**source_context),
                 ))
 
-        # Database initialization
-        role_exists = l(
-            'sudo -u postgres psql -tAc "select 1 from pg_roles where rolname=\'{USER}\'"'.format(**sql_context),
-            capture=True,
-        )
-        if not role_exists:
-            l('sudo -u postgres psql -c "create role {USER} with nosuperuser createdb nocreaterole login password \'{PASSWORD}\';"'.format(**sql_context))
-
-        database_exists = l(
-            'sudo -u postgres psql -tAc  "select 1 from pg_database where datname=\'{DATABASE}\'"'.format(**sql_context),
-            capture=True
-        )
-        if not database_exists:
-            l('sudo -u postgres psql -c "create database {DATABASE} with owner={USER} template=template0 encoding=\'utf-8\'"'.format(**sql_context))
+        # initialize
+        initialize_postgres(redshift_context)
+        initialize_postgres(cache_context)
+        initialize_mysql(source_context, sql_path)
+    elif true(force):
+        fab.warn("Cannot force database set-up outside of development role {!r}"
+                 .format(fab.env.roles))
+        return
 
 
 # Helpers #

@@ -3,7 +3,7 @@ from mock import patch
 from sqlalchemy import Integer
 from sqlalchemy.exc import ProgrammingError
 
-from forklift.db.base import engine
+from forklift.db.base import redshift_engine as engine
 from forklift.db.utils import staging_table, drop_table_if_exists, create_new_table, get_rowcount
 from forklift.models.raw import Event, Visit, Visitor
 from forklift.warehouse.definition import HourlyAggregateTable
@@ -11,12 +11,12 @@ from forklift.warehouse.columns import Fact, Dimension
 import forklift.loaders.fact.hourly as loaders
 import forklift.loaders.fbsync as fbsync
 
-from forklift.testing import ForkliftTestCase
+from forklift.testing import ForkliftTransactionalTestCase
 
 import logging
 logger = logging.getLogger(__name__)
 
-class LoaderTestCase(ForkliftTestCase):
+class LoaderTestCase(ForkliftTransactionalTestCase):
 
     @classmethod
     def visitor_templates(cls):
@@ -308,7 +308,7 @@ class EdgeflipLoaderTestCase(LoaderTestCase):
             self.assertSingleResult(expected, result)
 
 
-class FBSyncTestCase(ForkliftTestCase):
+class FBSyncTestCase(ForkliftTransactionalTestCase):
     EXISTING_POST_ID = "54_244"
 
     @classmethod
@@ -590,6 +590,7 @@ class FBSyncTestCase(ForkliftTestCase):
     def test_merge_post_aggregates(self):
         updated_users_table = 'updated'
         with engine.connect() as connection:
+            drop_table_if_exists(updated_users_table, connection)
             connection.execute('truncate {}'.format(fbsync.POST_AGGREGATES_TABLE))
             connection.execute('create table {} (fbid bigint)'.format(updated_users_table))
             connection.execute('insert into {} values (1)'.format(updated_users_table))
@@ -729,6 +730,7 @@ class FBSyncTestCase(ForkliftTestCase):
     def test_merge_poster_aggregates(self):
         updated_users_table = 'updated'
         with engine.connect() as connection:
+            drop_table_if_exists(updated_users_table, connection)
             connection.execute('truncate {}'.format(fbsync.POSTER_AGGREGATES_TABLE))
             connection.execute('create table {} (fbid_poster bigint)'.format(updated_users_table))
             connection.execute('insert into {} values (1)'.format(updated_users_table))

@@ -1,11 +1,11 @@
 import datetime
 from mock import patch
 from forklift.loaders.fbsync import FeedFromS3, FeedPostFromJson, FeedChunk, DEFAULT_DELIMITER, POSTS, LINKS, LIKES, TOP_WORDS, ENTITIES
-from forklift.testing import ForkliftTestCase
+from forklift.testing import ForkliftTransactionalTestCase
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 
-class FBSyncTestCase(ForkliftTestCase):
+class FBSyncTestCase(ForkliftTransactionalTestCase):
     primary = "12345"
     best_friend = "23456"
     well_wisher_one = "34567"

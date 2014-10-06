@@ -449,7 +449,7 @@ def add_new_data(bucket_name, common_prefix, version, posts_folder, user_posts_f
     )
 
     for table in AFFECTED_TABLES:
-        dbutils.optimize(table, logger)
+        dbutils.optimize(table, logger, engine)
 
     for incremental_table in incremental_tables:
         dbutils.drop_table_if_exists(incremental_table, engine)

@@ -73,6 +73,30 @@ def write_string_to_key(bucket, key_name, string):
     key.close()
 
 
+def key_to_local_file(bucket_name, s3_key_name, file_obj):
+    s3_conn = get_conn_s3()
+    bucket = s3_conn.get_bucket(bucket_name)
+    key = bucket.get_key(s3_key_name)
+    key.get_contents_to_file(file_obj)
+
+
+def write_file_to_key(bucket_name, key, file_obj):
+    s3conn = get_conn_s3()
+    red = s3conn.get_bucket(bucket_name)
+    k = red.new_key(key)
+    k.set_contents_from_file(file_obj)
+    logger.info("Uploaded %s to s3" % key)
+
+
+def write_filename_to_key(bucket_name, filename):
+    s3conn = get_conn_s3()
+    red = s3conn.get_bucket(bucket_name)
+
+    k = red.new_key(filename)
+    k.set_contents_from_filename('%s.csv' % filename)
+    logger.info("Uploaded %s to s3" % filename)
+
+
 class S3ReservoirSampler(ReservoirSampler):
     def generator(self, bucket_name):
         conn_s3 = get_conn_s3()

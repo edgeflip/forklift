@@ -16,8 +16,13 @@ if os.path.isdir(GLOBAL_CONFIG_DIR):
 locals().update((key.upper(), value) for key, value in config.items())
 
 redshift_config = DATABASES['redshift']
-SQLALCHEMY_URL = "postgresql://{user}:{pass}@{host}:{port}/{db}".format(**redshift_config)
+REDSHIFT_URL = "postgresql://{user}:{pass}@{host}:{port}/{db}".format(**redshift_config)
 
+rds_source_config = DATABASES['rds_source']
+RDS_SOURCE_URL = "mysql://{user}:{pass}@{host}:{port}/{db}".format(**rds_source_config)
+
+rds_cache_config = DATABASES['rds_cache']
+RDS_CACHE_URL = "postgresql://{user}:{pass}@{host}:{port}/{db}".format(**rds_cache_config)
 
 # Celery
 BROKER_URL = 'amqp://{user}:{pass}@{host}:5672/{vhost}'.format(**RABBITMQ)
