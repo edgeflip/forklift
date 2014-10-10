@@ -1,5 +1,6 @@
 import csv
 from logging import debug, info, warning
+import os
 import psycopg2
 import tempfile
 from sqlalchemy.exc import ProgrammingError
@@ -111,7 +112,7 @@ def unload_to_s3(connection, table_name, bucket_name, key_name, delim="\t"):
     connection.execute("""
         UNLOAD ('select * from {table}') TO 's3://{bucket}/{key}'
         CREDENTIALS 'aws_access_key_id={access};aws_secret_access_key={secret}'
-        DELIMITER '{delim}'
+        DELIMITER '{delim}' ALLOWOVERWRITE PARALLEL OFF
     """.format(
         delim=delim,
         table=table_name,
@@ -214,6 +215,7 @@ def get_columns(table, schema, connection, formatter):
             character_maximum_length
         from information_schema.columns
         where table_name = '{}' and {} = '{}'
+	order by ordinal_position
     """.format(table, db_key, schema))
 
     return ','.join(
@@ -245,7 +247,9 @@ def copy_to_redshift(rds_source_engine, redshift_engine, staging_table, final_ta
 
     key_name = "rds_sync/{}.csv".format(final_table)
 
+    file_obj.seek(0, os.SEEK_SET)
     write_file_to_key(BUCKET_NAME, key_name, file_obj)
+    file_obj.seek(0, os.SEEK_SET)
     ups3time = time.time()
     runs3 = ups3time - csvtime
 
@@ -257,13 +261,14 @@ def copy_to_redshift(rds_source_engine, redshift_engine, staging_table, final_ta
 
         # copy the file that we just uploaded to s3 to redshift
         try:
-            load_from_s3(
-                connection,
-                BUCKET_NAME,
-                key_name,
-                staging_table,
-                delim
-            )
+            with connection.begin():
+                load_from_s3(
+                    connection,
+                    BUCKET_NAME,
+                    key_name,
+                    staging_table,
+                    delim
+                )
         except psycopg2.DatabaseError:
             # step through the csv we are about to copy over and change the encodings to work properly with redshift
             warning("Error copying, assuming encoding errors and rewriting CSV...")
@@ -281,14 +286,16 @@ def copy_to_redshift(rds_source_engine, redshift_engine, staging_table, final_ta
                     keep_going = False
 
             info("Rewrite complete")
+            converted_file.seek(0, os.SEEK_SET)
             write_file_to_key(BUCKET_NAME, key_name, converted_file)
-            load_from_s3(
-                connection,
-                BUCKET_NAME,
-                key_name,
-                staging_table,
-                delim
-            )
+            with connection.begin():
+                load_from_s3(
+                    connection,
+                    BUCKET_NAME,
+                    key_name,
+                    staging_table,
+                    delim
+                )
 
         copytime = time.time()
         runcopy = copytime - ups3time
@@ -340,10 +347,10 @@ def cache_table(redshift_engine, cache_engine, staging_table, final_table, old_t
     file_obj = tempfile.NamedTemporaryFile()
     key_to_local_file(
         BUCKET_NAME,
-        s3_key_name,
+        "{}000".format(s3_key_name),
         file_obj
     )
-
+    file_obj.seek(0, os.SEEK_SET)
     with cache_engine.connect() as connection:
         drop_table_if_exists(staging_table, connection)
         connection.execute("CREATE TABLE {0} ({1})".format(staging_table, columns))

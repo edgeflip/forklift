@@ -2,7 +2,7 @@ from boto.dynamodb.layer2 import Layer2
 from boto.dynamodb.condition import IN, BETWEEN
 from boto.s3.key import Key
 from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, add_new_data
-from forklift.db.base import engine
+from forklift.db.base import redshift_engine
 from forklift.utils import batcher
 from forklift.s3.utils import get_conn_s3
 from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 logger.propagate = False
 
-BATCH_SIZE = 25
+BATCH_SIZE = 50
 S3_OUT_BUCKET_NAME = "warehouse-forklift"
 HOURS_BACK = 24
 COMMON_OUTPUT_PREFIX = "transfer_batches"
@@ -255,8 +255,9 @@ if __name__ == '__main__':
         args.training_set_size,
     )
 
+    exit(0)
     logger.info("Done loading to s3, time for Redshift!")
-    connection = engine.connect()
+    connection = redshift_engine.connect()
     add_new_data(
         args.out_bucket,
         COMMON_OUTPUT_PREFIX,

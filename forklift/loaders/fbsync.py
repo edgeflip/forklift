@@ -17,14 +17,14 @@ from forklift.s3.utils import write_string_to_key
 DB_TEXT_LEN = 4096
 MAX_RECORDS_TO_DEDUPE = 100000000
 UNIQUE_POST_ID_TABLE = 'fbid_post_ids'
-POSTS_TABLE = 'posts_pipeline_test'
-USER_POSTS_TABLE = 'user_posts_pipeline_test'
-LIKES_TABLE = 'page_likes_pipeline_test'
-TOP_WORDS_TABLE = 'top_words_pipeline_test'
-POST_AGGREGATES_TABLE = 'post_aggregates_pipeline_test'
-INTERACTOR_AGGREGATES_TABLE = 'user_interactor_aggregates_pipeline_test'
-POSTER_AGGREGATES_TABLE = 'user_poster_aggregates_pipeline_test'
-USER_AGGREGATES_TABLE = 'user_aggregates_pipeline_test'
+POSTS_TABLE = 'posts'
+USER_POSTS_TABLE = 'user_posts'
+LIKES_TABLE = 'page_likes'
+TOP_WORDS_TABLE = 'top_words'
+POST_AGGREGATES_TABLE = 'post_aggregates'
+INTERACTOR_AGGREGATES_TABLE = 'user_interactor_aggregates'
+POSTER_AGGREGATES_TABLE = 'user_poster_aggregates'
+USER_AGGREGATES_TABLE = 'user_aggregates'
 AFFECTED_TABLES = (
     POSTS_TABLE,
     USER_POSTS_TABLE,
@@ -347,6 +347,7 @@ def add_new_data(bucket_name, common_prefix, version, posts_folder, user_posts_f
         likes_incremental,
         top_words_incremental
     )
+
     with engine.connect() as connection:
         for incremental_table in incremental_tables:
             dbutils.drop_table_if_exists(incremental_table, connection)
@@ -498,13 +499,14 @@ def load(bucket_name, common_prefix, version, source_folder, raw_table, engine):
         path
     )
     with engine.connect() as connection:
-        dbutils.load_from_s3(
-            connection,
-            bucket_name,
-            path,
-            raw_table,
-            create_statement=create_sql(raw_table, version)
-        )
+        with connection.begin():
+            dbutils.load_from_s3(
+                connection,
+                bucket_name,
+                path,
+                raw_table,
+                create_statement=create_sql(raw_table, version)
+            )
     logger.info(
         '%s rows loaded into %s',
         dbutils.get_rowcount(raw_table, engine=engine),
@@ -957,7 +959,7 @@ from (
         max(num_shared_w_me) as num_shared_w_me,
         max(num_mine_liked) as num_mine_liked,
         max(num_mine_commented) as num_mine_commented,
-        max(num_i_shared_with) as num_i_shared_with,
+        max(num_i_shared) as num_i_shared,
         max(num_stat_upd) as num_stat_upd,
         max(num_friends_interacted_with_my_posts) as num_friends_interacted_with_my_posts,
         max(num_friends_i_interacted_with) as num_friends_i_interacted_with,
