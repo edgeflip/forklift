@@ -150,3 +150,12 @@ def process(rds_source_engine, redshift_engine, cache_engine, delim='|'):
             old_table_name(aggregate_table),
             delim
         )
+    for synced_table in ('clients', 'campaigns'):
+        cache_table(
+            redshift_engine,
+            cache_engine,
+            staging_table_name(synced_table),
+            synced_table,
+            old_table_name(synced_table),
+            delim
+        )

@@ -319,7 +319,7 @@ def copy_from_file(engine, table, file_obj, delim):
     connection = engine.raw_connection()
     cursor = connection.cursor()
     cursor.copy_expert(
-        "copy {} from STDIN with DELIMITER '{}'".format(table, delim),
+        "copy {} from STDIN with DELIMITER '{}' NULL ''".format(table, delim),
         file_obj
     )
     cursor.close()
