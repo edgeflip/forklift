@@ -28,7 +28,7 @@ def stream_files_between(start, end):
         aws_secret_access_key=AWS_SECRET_KEY
     )
 
-    table = querier.get_table('staging.fb_sync_maps')
+    table = querier.get_table('prod.fb_sync_maps')
     logger.info("Scanning table {} for files between {} and {}".format(
         table.name,
         start,
