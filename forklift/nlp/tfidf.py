@@ -15,7 +15,7 @@ VECTORIZER_TRAINING_BUCKET = "user_feeds_0"
 VECTORIZER_DEFAULT_BUCKET = "warehouse-forklift"
 VECTORIZER_DEFAULT_PREFIX = "vectorizer"
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 logger.propagate = False
 
@@ -55,6 +55,40 @@ def load_or_train_vectorizer_components(
     idf_matrix = pickle.loads(idf_key.get_contents_as_string())
 
     return (vocab, idf_matrix)
+
+
+def ensure_trained_default_vectorizer(
+    s3_conn,
+    data_bucket_name,
+    training_set_size
+):
+    vocab_key, idf_key = build_keys(
+        s3_conn,
+        VECTORIZER_DEFAULT_BUCKET,
+        VECTORIZER_DEFAULT_PREFIX
+    )
+
+    if not vocab_key.exists() or not idf_key.exists():
+        logger.info("Vectorizer not found, training will now commence")
+        train_and_save(
+            vocab_key,
+            idf_key,
+            data_bucket_name,
+            training_set_size
+        )
+
+
+def load_default_vectorizer(s3_conn):
+    vocab_key, idf_key = build_keys(
+        s3_conn,
+        VECTORIZER_DEFAULT_BUCKET,
+        VECTORIZER_DEFAULT_PREFIX
+    )
+
+    vocab = pickle.loads(vocab_key.get_contents_as_string())
+    idf_matrix = pickle.loads(idf_key.get_contents_as_string())
+
+    return bootstrap_trained_vectorizer(vocab, idf_matrix)
 
 
 def build_keys(

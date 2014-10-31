@@ -1,3 +1,4 @@
 mock
 freezegun
 factory_boy
+redis

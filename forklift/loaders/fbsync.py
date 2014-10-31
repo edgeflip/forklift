@@ -47,7 +47,7 @@ TOP_WORDS = 'top_words'
 ENTITIES = (POSTS, LINKS, LIKES, TOP_WORDS)
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
 
 
 def incremental_table_name(table_base, version):
@@ -498,6 +498,7 @@ def load(bucket_name, common_prefix, version, source_folder, raw_table, engine):
         bucket_name,
         path
     )
+    #raise ValueError("i dunno")
     with engine.connect() as connection:
         with connection.begin():
             dbutils.load_from_s3(
