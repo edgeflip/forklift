@@ -30,6 +30,7 @@ CELERY_IMPORTS = ('forklift.tasks', )
 CELERY_RESULT_BACKEND = 'redis://localhost'
 CELERYD_PREFETCH_MULTIPLIER = 1
 CELERY_ACCEPT_CONTENT = ['pickle']
+CELERY_MAX_TASKS_PER_CHILD = 5
 
 QUEUE_ARGS = {'x-ha-policy': 'all'}
 CELERY_QUEUES = (
