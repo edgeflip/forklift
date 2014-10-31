@@ -78,6 +78,7 @@ def ensure_trained_default_vectorizer(
         )
 
 
+# will fail if the vectorizer doesn't exist. you've been warned
 def load_default_vectorizer(s3_conn):
     vocab_key, idf_key = build_keys(
         s3_conn,

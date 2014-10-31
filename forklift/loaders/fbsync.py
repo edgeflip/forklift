@@ -498,7 +498,6 @@ def load(bucket_name, common_prefix, version, source_folder, raw_table, engine):
         bucket_name,
         path
     )
-    #raise ValueError("i dunno")
     with engine.connect() as connection:
         with connection.begin():
             dbutils.load_from_s3(
