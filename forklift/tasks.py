@@ -5,16 +5,16 @@ from celery.exceptions import MaxRetriesExceededError
 import forklift.loaders.fact.hourly as loaders
 from forklift.db.base import redshift_engine
 from forklift.db.utils import checkout_connection
-from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, add_new_data
+from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, FBSyncLoader
 from forklift.nlp import tfidf
 from forklift.s3.utils import get_conn_s3
-import logging
+from celery.utils.log import get_task_logger
 
 app = celery.Celery('forklift')
 app.config_from_object('forklift.settings')
 app.autodiscover_tasks(['forklift.tasks'])
 
-logger = logging.getLogger()
+logger = get_task_logger(__name__)
 
 
 @app.task
@@ -79,7 +79,7 @@ class VectorizerTask(app.Task):
 @app.task(base=VectorizerTask, bind=True, default_retry_delay=5, max_retries=3)
 def fbsync_process(self, keys, version, out_bucket_name, unique_id):
     try:
-        feed_chunk = FeedChunk(self.vectorizer)
+        feed_chunk = FeedChunk(self.vectorizer, logger)
         s3_conn = get_conn_s3()
         for bucket_name, primary, secondary in keys:
             key = Key(
@@ -129,15 +129,15 @@ def fbsync_load(totals, out_bucket, version):
         *total
     )
     try:
-        add_new_data(
+        loader = FBSyncLoader(engine=redshift_engine, logger=logger)
+        loader.add_new_data(
             out_bucket,
             COMMON_OUTPUT_PREFIX,
             version,
             POSTS_FOLDER,
             LINKS_FOLDER,
             LIKES_FOLDER,
-            TOP_WORDS_FOLDER,
-            redshift_engine
+            TOP_WORDS_FOLDER
         )
         logger.info("Done adding new data from run %s", version)
     except Exception:

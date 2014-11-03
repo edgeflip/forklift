@@ -84,7 +84,10 @@ LOGGING = {
         },
         '__main__': {
             'handlers': ['console'],
-        }
+        },
+        'forklift.tasks': {
+            'handlers': ['console', 'syslog'],
+        },
     }
 }
 
@@ -102,9 +105,9 @@ logging.config.dictConfig(LOGGING)
 def configure_logging(sender=None, **kwargs):
     logging.config.dictConfig(LOGGING)
 
+
 IP_SLUG = 'ip'
 FBID_SLUG = 'fbid'
 VISIT_SLUG = 'visit'
 FRIEND_SLUG = 'friend_fbid'
 MISC_SLUG = 'misc'
-
