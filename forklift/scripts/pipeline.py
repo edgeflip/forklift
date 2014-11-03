@@ -134,5 +134,5 @@ if __name__ == '__main__':
         )
     )
     logger.info("Pushing run onto fbsync queue")
-    chord(group, tasks.fbsync_load.s(args.out_bucket, version))()
+    chord(group)(tasks.fbsync_load.s(args.out_bucket, version))
     logger.info("Successfully pushed run onto fbsync queue")

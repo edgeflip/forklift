@@ -95,7 +95,7 @@ def fbsync_process(self, keys, version, out_bucket_name, unique_id):
             TOP_WORDS: key_name(version, TOP_WORDS_FOLDER, unique_id),
         }
 
-        logger.info("Writing chunk to s3: {}".format(key_names))
+        logger.info("Writing chunk to s3: %s", key_names)
         feed_chunk.write_s3(
             s3_conn,
             out_bucket_name,
@@ -107,13 +107,13 @@ def fbsync_process(self, keys, version, out_bucket_name, unique_id):
             feed_chunk.counts[LINKS],
             feed_chunk.counts[LIKES]
         )
-    except Exception as exc:
+    except Exception:
         identifier = "run {}/chunk {}".format(version, unique_id)
-        logger.warning("{} failed due to error {}, retrying".format(identifier, exc))
+        logger.exception("%s failed due to error", identifier)
         try:
             self.retry()
         except MaxRetriesExceededError:
-            logger.error("{} had too many retries, failing".format(identifier))
+            logger.exception("%s had too many retries, failing", identifier)
             return (0,0,0)
 
 
@@ -124,10 +124,10 @@ def fbsync_load(totals, out_bucket, version):
         totals,
         (0, 0, 0)
     )
-    logger.info("Adding new data from run {}: posts = {}, user_posts = {}, likes = {}".format(
+    logger.info("Adding new data from run %s: posts = %s, user_posts = %s, likes = %s",
         version,
         *total
-    ))
+    )
     try:
         add_new_data(
             out_bucket,
@@ -139,9 +139,6 @@ def fbsync_load(totals, out_bucket, version):
             TOP_WORDS_FOLDER,
             redshift_engine
         )
-        logger.info("Done adding new data from run {}".format(version))
-    except Exception as e:
-        logger.error(
-            "Worker processing run {} caught error. Original exception: {}".format(
-                version, e
-        ))
+        logger.info("Done adding new data from run %s", version)
+    except Exception:
+        logger.exception("Worker processing run %s caught error", version)
