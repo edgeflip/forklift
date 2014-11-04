@@ -4,7 +4,6 @@ from cStringIO import StringIO
 import forklift.db.utils as dbutils
 import httplib
 import json
-import logging
 import socket
 import ssl
 import tempfile
@@ -45,9 +44,6 @@ LINKS = 'links'
 LIKES = 'likes'
 TOP_WORDS = 'top_words'
 ENTITIES = (POSTS, LINKS, LIKES, TOP_WORDS)
-
-
-logger = logging.getLogger()
 
 
 def incremental_table_name(table_base, version):
@@ -499,7 +495,7 @@ class FBSyncLoader(object):
 
     def load(self, bucket_name, common_prefix, version, source_folder, raw_table):
         path = '/'.join((common_prefix, version, source_folder))
-        logger.info(
+        self.logger.info(
             'Loading raw data into %s from s3://%s/%s',
             raw_table,
             bucket_name,
@@ -645,7 +641,7 @@ class FBSyncLoader(object):
     def find_new_likes(self, incremental_table, final_table):
         temp_table = incremental_table + '_new'
         dbutils.drop_table_if_exists(temp_table, self.engine)
-        logger.info(
+        self.logger.info(
             'Populating list of new records from %s compared with %s',
             incremental_table, final_table
         )

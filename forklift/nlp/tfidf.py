@@ -15,9 +15,8 @@ VECTORIZER_TRAINING_BUCKET = "user_feeds_0"
 VECTORIZER_DEFAULT_BUCKET = "warehouse-forklift"
 VECTORIZER_DEFAULT_PREFIX = "vectorizer"
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-logger.propagate = False
 
 
 def create_vectorizer(**extra_kwargs):
