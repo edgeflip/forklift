@@ -5,7 +5,12 @@ import os
 
 @fab.task(name='celery')
 def start_celery():
-    fab.local("ENV={} celery -A forklift.tasks worker".format(os.environ['ENV']))
+    environment = os.environ['ENV'] if 'ENV' in os.environ else 'development'
+    if environment in ['staging', 'production']:
+        faraday_conf = '/etc/forklift/faraday.yaml'
+    else:
+        faraday_conf = 'faraday.yaml'
+    fab.local("ENV={} FARADAY_SETTINGS_FILE={} celery -A forklift.tasks worker".format(environment, faraday_conf))
 
 
 @fab.task
