@@ -111,7 +111,7 @@ class DynamoSyncTestCase(DynamoTestCase):
         loader.oneweek_expression = lambda: "CURRENT_DATE - INTERVAL '1 week'"
 
         # run the sync process
-        loader.dynamo_sync()
+        loader.sync()
 
         # primaries and secondaries should be in redshift now
         self.assertEqual(get_rowcount(USERS_TABLE, redshift_engine), 2)

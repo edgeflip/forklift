@@ -114,7 +114,7 @@ if __name__ == '__main__':
 
     logger.info("Syncing dynamo")
     dynamo_loader = DynamoLoader(logger, redshift_engine.connect())
-    dynamo_loader.dynamo_sync()
+    dynamo_loader.sync()
 
     logger.info("Ensuring that the default vectorizer is trained")
 

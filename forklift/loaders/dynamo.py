@@ -219,7 +219,7 @@ class DynamoLoader(object):
                 )
             )
 
-    def dynamo_sync(self):
+    def sync(self):
         primaries_key = "primaries.csv"
         secondaries_key = "secondaries.csv"
         edges_key = "edges.csv"
