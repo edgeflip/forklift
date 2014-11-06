@@ -4,7 +4,6 @@ from cStringIO import StringIO
 import forklift.db.utils as dbutils
 import httplib
 import json
-import logging
 import socket
 import ssl
 import tempfile
@@ -45,9 +44,6 @@ LINKS = 'links'
 LIKES = 'likes'
 TOP_WORDS = 'top_words'
 ENTITIES = (POSTS, LINKS, LIKES, TOP_WORDS)
-
-
-logger = logging.getLogger(__name__)
 
 
 def incremental_table_name(table_base, version):
@@ -243,25 +239,6 @@ def create_sql(table_name, version=None):
         raise ValueError('Table {} not recognized'.format(table_name))
 
 
-def dedupe(table_with_dupes, staging_table_name, version, engine):
-    sql = dedupe_sql(staging_table_name, version).format(
-        new_table=staging_table_name,
-        raw_table=table_with_dupes
-    )
-    logger.info(
-        'Deduping records from %s into staging table %s',
-        table_with_dupes,
-        staging_table_name
-    )
-    logger.info(sql)
-    with engine.connect() as connection:
-        connection.execute(sql)
-    logger.info(
-        '%s records after deduping',
-        dbutils.get_rowcount(staging_table_name, engine=engine)
-    )
-
-
 def dedupe_sql(base_table_name, version):
     if (
         base_table_name == POSTS_TABLE or
@@ -335,656 +312,647 @@ def dedupe_sql(base_table_name, version):
         raise ValueError('Table {} not recognized'.format(base_table_name))
 
 
-# when FBSync just grabbed some new data and we want to merge it in
-def add_new_data(bucket_name, common_prefix, version, posts_folder, user_posts_folder, likes_folder, top_words_folder, engine):
-    posts_incremental = incremental_table_name(POSTS_TABLE, version)
-    user_posts_incremental = incremental_table_name(USER_POSTS_TABLE, version)
-    likes_incremental = incremental_table_name(LIKES_TABLE, version)
-    top_words_incremental = incremental_table_name(TOP_WORDS_TABLE, version)
-    incremental_tables = (
-        posts_incremental,
-        user_posts_incremental,
-        likes_incremental,
-        top_words_incremental
-    )
+class FBSyncLoader(object):
 
-    with engine.connect() as connection:
-        for incremental_table in incremental_tables:
-            dbutils.drop_table_if_exists(incremental_table, connection)
+    def __init__(self, engine, logger):
+        self.engine = engine
+        self.logger = logger
 
-    load(
+    def log_rowcount(self, table_name, custom_msg=None):
+        msg = custom_msg or '%s records found in %s'
+        self.logger.info(
+            msg,
+            dbutils.get_rowcount(table_name, engine=self.engine),
+            table_name
+        )
+
+    def dedupe(self, table_with_dupes, staging_table_name, version):
+        sql = dedupe_sql(staging_table_name, version).format(
+            new_table=staging_table_name,
+            raw_table=table_with_dupes
+        )
+        self.logger.info(
+            'Deduping records from %s into staging table %s',
+            table_with_dupes,
+            staging_table_name
+        )
+        self.logger.info(sql)
+        with self.engine.connect() as connection:
+            connection.execute(sql)
+        self.log_rowcount(staging_table_name, '%s records in %s after deduping')
+
+    # when FBSync just grabbed some new data and we want to merge it in
+    def add_new_data(
+        self,
         bucket_name,
         common_prefix,
         version,
         posts_folder,
-        raw_table_name(posts_incremental),
-        engine
-    )
-    load(
-        bucket_name,
-        common_prefix,
-        version,
         user_posts_folder,
-        raw_table_name(user_posts_incremental),
-        engine
-    )
-    load(
-        bucket_name,
-        common_prefix,
-        version,
         likes_folder,
-        raw_table_name(likes_incremental),
-        engine
-    )
-    load(
-        bucket_name,
-        common_prefix,
-        version,
-        top_words_folder,
-        raw_table_name(top_words_incremental),
-        engine
-    )
-
-    merge_in_smaller_batches(
-        raw_table_name(posts_incremental),
-        posts_incremental,
-        POSTS_TABLE,
-        find_new_posts,
-        merge_posts,
-        version,
-        engine
-    )
-    merge_in_smaller_batches(
-        raw_table_name(user_posts_incremental),
-        user_posts_incremental,
-        USER_POSTS_TABLE,
-        find_new_user_posts,
-        merge_user_posts,
-        version,
-        engine
-    )
-    merge_in_smaller_batches(
-        raw_table_name(likes_incremental),
-        likes_incremental,
-        LIKES_TABLE,
-        find_new_likes,
-        merge_likes,
-        version,
-        engine
-    )
-    merge_in_smaller_batches(
-        raw_table_name(top_words_incremental),
-        top_words_incremental,
-        TOP_WORDS_TABLE,
-        find_new_top_words,
-        merge_top_words,
-        version,
-        engine
-    )
-
-    # get posts and related aggregates
-    updated_posts_table = calculate_users_with_new_posts(
-        raw_table_name(posts_incremental),
-        engine
-    )
-    merge_post_aggregates(updated_posts_table, POSTS_TABLE, POST_AGGREGATES_TABLE, engine)
-    # post interactions and related aggregates
-    outbound_users_table = calculate_users_with_outbound_interactions(
-        raw_table_name(user_posts_incremental),
-        engine
-    )
-
-    inbound_users_table = calculate_users_with_inbound_interactions(
-        raw_table_name(user_posts_incremental),
-        engine
-    )
-    merge_interactor_aggregates(outbound_users_table, USER_POSTS_TABLE, INTERACTOR_AGGREGATES_TABLE, engine)
-    merge_poster_aggregates(inbound_users_table, USER_POSTS_TABLE, POSTER_AGGREGATES_TABLE, engine)
-
-    merge_user_aggregates(
-        updated_posts_table,
-        inbound_users_table,
-        outbound_users_table,
-        USER_AGGREGATES_TABLE,
-        engine
-    )
-
-    for table in AFFECTED_TABLES:
-        dbutils.optimize(table, logger, engine)
-
-    for incremental_table in incremental_tables:
-        dbutils.drop_table_if_exists(incremental_table, engine)
-
-def merge_in_smaller_batches(
-    raw_table,
-    incremental_table,
-    final_table,
-    finder_routine,
-    merger_routine,
-    version,
-    engine
-):
-
-    with engine.connect() as connection:
-        new_table = finder_routine(
-            raw_table,
-            final_table,
-            connection
+        top_words_folder
+    ):
+        posts_incremental = incremental_table_name(POSTS_TABLE, version)
+        user_posts_incremental = incremental_table_name(USER_POSTS_TABLE, version)
+        likes_incremental = incremental_table_name(LIKES_TABLE, version)
+        top_words_incremental = incremental_table_name(TOP_WORDS_TABLE, version)
+        incremental_tables = (
+            posts_incremental,
+            user_posts_incremental,
+            likes_incremental,
+            top_words_incremental
         )
-        unmerged_row_count = dbutils.get_rowcount(new_table, engine=engine)
-        while unmerged_row_count > 0:
-            logger.info("Remaining unmerged rows: {}".format(unmerged_row_count))
-            dedupe(
-                new_table,
-                incremental_table,
-                version,
-                connection
-            )
-            merger_routine(incremental_table, final_table, connection)
-            dbutils.drop_table(incremental_table, connection)
-            dbutils.drop_table(new_table, connection)
+
+        with self.engine.connect() as connection:
+            for incremental_table in incremental_tables:
+                dbutils.drop_table_if_exists(incremental_table, connection)
+
+        self.load(
+            bucket_name,
+            common_prefix,
+            version,
+            posts_folder,
+            raw_table_name(posts_incremental)
+        )
+        self.load(
+            bucket_name,
+            common_prefix,
+            version,
+            user_posts_folder,
+            raw_table_name(user_posts_incremental)
+        )
+        self.load(
+            bucket_name,
+            common_prefix,
+            version,
+            likes_folder,
+            raw_table_name(likes_incremental)
+        )
+        self.load(
+            bucket_name,
+            common_prefix,
+            version,
+            top_words_folder,
+            raw_table_name(top_words_incremental)
+        )
+
+        self.merge_in_smaller_batches(
+            raw_table_name(posts_incremental),
+            posts_incremental,
+            POSTS_TABLE,
+            self.find_new_posts,
+            self.merge_posts,
+            version
+        )
+        self.merge_in_smaller_batches(
+            raw_table_name(user_posts_incremental),
+            user_posts_incremental,
+            USER_POSTS_TABLE,
+            self.find_new_user_posts,
+            self.merge_user_posts,
+            version
+        )
+        self.merge_in_smaller_batches(
+            raw_table_name(likes_incremental),
+            likes_incremental,
+            LIKES_TABLE,
+            self.find_new_likes,
+            self.merge_likes,
+            version
+        )
+        self.merge_in_smaller_batches(
+            raw_table_name(top_words_incremental),
+            top_words_incremental,
+            TOP_WORDS_TABLE,
+            self.find_new_top_words,
+            self.merge_top_words,
+            version
+        )
+
+        # get posts and related aggregates
+        updated_posts_table = self.calculate_users_with_new_posts(
+            raw_table_name(posts_incremental)
+        )
+        self.merge_post_aggregates(updated_posts_table, POSTS_TABLE, POST_AGGREGATES_TABLE)
+        # post interactions and related aggregates
+        outbound_users_table = self.calculate_users_with_outbound_interactions(
+            raw_table_name(user_posts_incremental)
+        )
+
+        inbound_users_table = self.calculate_users_with_inbound_interactions(
+            raw_table_name(user_posts_incremental)
+        )
+        self.merge_interactor_aggregates(outbound_users_table, USER_POSTS_TABLE, INTERACTOR_AGGREGATES_TABLE)
+        self.merge_poster_aggregates(inbound_users_table, USER_POSTS_TABLE, POSTER_AGGREGATES_TABLE)
+
+        self.merge_user_aggregates(
+            updated_posts_table,
+            inbound_users_table,
+            outbound_users_table,
+            USER_AGGREGATES_TABLE
+        )
+
+        for table in AFFECTED_TABLES:
+            dbutils.optimize(table, self.logger, self.engine)
+
+        for incremental_table in incremental_tables:
+            dbutils.drop_table_if_exists(incremental_table, self.engine)
+
+    def merge_in_smaller_batches(
+        self,
+        raw_table,
+        incremental_table,
+        final_table,
+        finder_routine,
+        merger_routine,
+        version,
+    ):
+
+        with self.engine.connect() as connection:
             new_table = finder_routine(
                 raw_table,
-                final_table,
-                connection
+                final_table
             )
-            unmerged_row_count = dbutils.get_rowcount(new_table, engine=engine)
+            unmerged_row_count = dbutils.get_rowcount(new_table, engine=self.engine)
+            while unmerged_row_count > 0:
+                self.logger.info("Remaining unmerged rows: {}".format(unmerged_row_count))
+                self.dedupe(
+                    new_table,
+                    incremental_table,
+                    version
+                )
+                merger_routine(incremental_table, final_table, connection)
+                dbutils.drop_table(incremental_table, connection)
+                dbutils.drop_table(new_table, connection)
+                new_table = finder_routine(
+                    raw_table,
+                    final_table,
+                )
+                unmerged_row_count = dbutils.get_rowcount(new_table, engine=self.engine)
 
-def load(bucket_name, common_prefix, version, source_folder, raw_table, engine):
-    path = '/'.join((common_prefix, version, source_folder))
-    logger.info(
-        'Loading raw data into %s from s3://%s/%s',
-        raw_table,
-        bucket_name,
-        path
-    )
-    with engine.connect() as connection:
-        with connection.begin():
-            dbutils.load_from_s3(
-                connection,
-                bucket_name,
-                path,
-                raw_table,
-                create_statement=create_sql(raw_table, version)
-            )
-    logger.info(
-        '%s rows loaded into %s',
-        dbutils.get_rowcount(raw_table, engine=engine),
-        raw_table
-    )
-
-
-def calculate_users_with_new_posts(
-    posts_incremental_table,
-    engine
-):
-    temp_table = posts_incremental_table + '_updated'
-    dbutils.drop_table_if_exists(temp_table, engine)
-    logger.info(
-        'Populating list of users with updated posts from %s',
-        posts_incremental_table
-    )
-    with engine.connect() as connection:
-        connection.execute("""
-            CREATE TABLE {temp_table} AS
-            SELECT distinct fbid_user as fbid
-            FROM {incremental_table}
-        """.format(
-            temp_table=temp_table,
-            incremental_table=posts_incremental_table
-        ))
-
-    logger.info(
-        '%s updated users found',
-        dbutils.get_rowcount(temp_table, engine=engine)
-    )
-    return temp_table
-
-
-def calculate_users_with_outbound_interactions(
-    user_posts_incremental_table,
-    engine
-):
-    temp_table = user_posts_incremental_table + '_outbound_updated'
-    dbutils.drop_table_if_exists(temp_table, engine)
-    logger.info(
-        'Populating list of users with updated post interactions from %s',
-        user_posts_incremental_table
-    )
-    with engine.connect() as connection:
-        connection.execute("""
-            CREATE TABLE {temp_table} AS
-            SELECT distinct fbid_user as fbid_user
-            FROM {incremental_table}
-        """.format(
-            temp_table=temp_table,
-            incremental_table=user_posts_incremental_table
-        ))
-
-    logger.info(
-        '%s updated users found',
-        dbutils.get_rowcount(temp_table, engine=engine)
-    )
-    return temp_table
-
-
-def calculate_users_with_inbound_interactions(
-    user_posts_incremental_table,
-    engine
-):
-    connection = engine.connect()
-    temp_table = user_posts_incremental_table + '_inbound_updated'
-    dbutils.drop_table_if_exists(temp_table, connection)
-    # 1. get list of user ids with new data
-    logger.info(
-        'Populating list of posters with updated post interactions from %s',
-        user_posts_incremental_table
-    )
-    with connection.begin():
-        connection.execute("""
-            CREATE TABLE {temp_table} AS
-            SELECT distinct fbid_poster as fbid_poster
-            FROM {incremental_table}
-        """.format(
-            temp_table=temp_table,
-            incremental_table=user_posts_incremental_table
-        ))
-
-    logger.info(
-        '%s updated users found',
-        dbutils.get_rowcount(temp_table, engine=engine)
-    )
-
-    return temp_table
-
-def find_new_posts(raw_table, final_table, engine):
-    temp_table = raw_table + '_new'
-    dbutils.drop_table_if_exists(temp_table, engine)
-    # populate list of new post ids
-    logger.info(
-        'Populating list of new posts from %s compared with records in %s',
-        raw_table,
-        final_table
-    )
-    with engine.connect() as connection:
-        connection.execute("""
-            CREATE TABLE {temp_table} AS
-            SELECT {raw_table}.*
-            FROM {raw_table}
-            LEFT JOIN {final_table} USING (fbid_post)
-            WHERE {final_table}.fbid_post is NULL
-            LIMIT {limit}
-        """.format(
-            temp_table=temp_table,
-            raw_table=raw_table,
-            final_table=final_table,
-            limit=MAX_RECORDS_TO_DEDUPE,
-        ))
-
-    logger.info(
-        '%s new posts found',
-        dbutils.get_rowcount(temp_table, engine=engine)
-    )
-    return temp_table
-
-
-def find_new_user_posts(incremental_table, final_table, engine):
-    temp_table = incremental_table + '_new'
-    # populate list of new post ids
-    dbutils.drop_table_if_exists(temp_table, engine)
-    logger.info(
-        'Populating list of new records from %s compared with records in %s',
-        incremental_table,
-        final_table
-    )
-    with engine.connect() as connection:
-        connection.execute("""
-            CREATE TABLE {temp_table} AS
-            SELECT {incremental_table}.*
-            FROM {incremental_table}
-            LEFT JOIN {final_table} USING (fbid_post, fbid_user)
-            WHERE {final_table}.fbid_post is NULL
-        """.format(
-            temp_table=temp_table,
-            incremental_table=incremental_table,
-            final_table=final_table
-        ))
-
-    logger.info(
-        '%s new records found out of %s in total',
-        dbutils.get_rowcount(temp_table, engine=engine),
-        dbutils.get_rowcount(incremental_table, engine=engine),
-    )
-    return temp_table
-
-
-def find_new_likes(incremental_table, final_table, engine):
-    temp_table = incremental_table + '_new'
-    dbutils.drop_table_if_exists(temp_table, engine)
-    logger.info(
-        'Populating list of new records from %s compared with %s',
-        incremental_table, final_table
-    )
-    with engine.connect() as connection:
-        connection.execute("""
-            CREATE TABLE {temp_table} AS
-            SELECT distinct fbid, page_id
-            FROM {incremental_table}
-            LEFT JOIN {final_table} USING (fbid, page_id)
-            WHERE {final_table}.fbid is NULL
-        """.format(
-            temp_table=temp_table,
-            incremental_table=incremental_table,
-            final_table=final_table
-        ))
-
-    logger.info(
-        '%s new records found',
-        dbutils.get_rowcount(temp_table, engine=engine)
-    )
-    return temp_table
-
-def find_new_top_words(incremental_table, final_table, engine):
-    temp_table = incremental_table + '_new'
-    dbutils.drop_table_if_exists(temp_table, engine)
-    logger.info(
-        'Populating list of new top words from %s compared with %s',
-        incremental_table, final_table
-    )
-    with engine.connect() as connection:
-        connection.execute("""
-            CREATE TABLE {temp_table} AS
-            SELECT fbid, max({incremental_table}.top_words) as top_words
-            FROM {incremental_table}
-            LEFT JOIN {final_table} USING (fbid)
-            WHERE {final_table}.fbid is NULL
-            GROUP BY 1
-        """.format(
-            temp_table=temp_table,
-            incremental_table=incremental_table,
-            final_table=final_table
-        ))
-
-    logger.info(
-        '%s new top_words found',
-        dbutils.get_rowcount(temp_table, engine=engine)
-    )
-    return temp_table
-
-# take deduped new posts from 'incremental_table' and merge them into 'final_table'
-def merge_posts(deduped_table, final_table, connection):
-    logger.info(
-        'Inserting new rows from %s into %s',
-        deduped_table,
-        final_table
-    )
-    connection.execute("""
-        INSERT INTO {final_table}
-        SELECT {deduped_table}.*
-        FROM {deduped_table}
-    """.format(
-        final_table=final_table,
-        deduped_table=deduped_table,
-    ))
-
-# take deduped new user_posts from 'incremental_table' and merge them into 'final_table'
-def merge_user_posts(deduped_table, final_table, connection):
-    # insert new versions into final table
-    logger.info(
-        'Inserting new rows from %s into %s',
-        deduped_table,
-        final_table
-    )
-    connection.execute("""
-        INSERT INTO {final_table}
-        SELECT {deduped_table}.*
-        FROM {deduped_table}
-    """.format(
-        final_table=final_table,
-        deduped_table=deduped_table,
-    ))
-
-def merge_likes(deduped_table, final_table, connection):
-    # insert new versions into final table
-    logger.info(
-        'Inserting new rows from %s into %s',
-        deduped_table,
-        final_table
-    )
-    connection.execute("""
-        INSERT INTO {final_table} (fbid, page_id)
-        SELECT fbid, page_id
-        FROM {deduped_table}
-    """.format(
-        final_table=final_table,
-        deduped_table=deduped_table,
-    ))
-
-
-def merge_top_words(deduped_table, final_table, connection):
-    # insert new versions into final table
-    logger.info(
-        'Inserting new rows from %s into %s',
-        deduped_table,
-        final_table
-    )
-    connection.execute("""
-        INSERT INTO {final_table} (fbid, top_words)
-        SELECT fbid, top_words
-        FROM {deduped_table}
-    """.format(
-        final_table=final_table,
-        deduped_table=deduped_table,
-    ))
-
-
-def merge_post_aggregates(
-    updated_users_table,
-    posts_full_table,
-    final_aggregate_table,
-    connection
-):
-    newconn = connection.connect()
-    with newconn.begin():
-        # 2. delete from final table with those userids
-        newconn.execute("""
-            DELETE
-            FROM {final_table}
-            WHERE fbid in (select distinct fbid from {temp_table})
-        """.format(
-            final_table=final_aggregate_table,
-            temp_table=updated_users_table
-        ))
-
-        # 3. find posts that are in temp and insert into final
-        newconn.execute("""
-            INSERT INTO {final_table}
-            SELECT
-                fbid_user as fbid,
-                date(min(ts)) as first_activity,
-                date(max(ts)) as last_activity,
-                count(distinct case when type = 'status' then fbid_post else null end) as num_stat_upd
-            FROM {temp_table}
-            JOIN {full_table} on ({full_table}.fbid_user = {temp_table}.fbid)
-            GROUP BY 1
-        """.format(
-            final_table=final_aggregate_table,
-            temp_table=updated_users_table,
-            full_table=posts_full_table
-        ))
-
-
-def merge_interactor_aggregates(
-    updated_users_table,
-    user_posts_full_table,
-    final_aggregate_table,
-    connection
-):
-    newconn = connection.connect()
-    with newconn.begin():
-        # delete from final table with changed userids
-        newconn.execute("""
-            DELETE
-            FROM {final_table}
-            WHERE fbid_user in (select distinct fbid_user from {temp_table})
-        """.format(
-            final_table=final_aggregate_table,
-            temp_table=updated_users_table
-        ))
-
-        # find posts that are in temp and insert into final
-        newconn.execute("""
-            INSERT INTO {final_table}
-            SELECT
-                {temp_table}.fbid_user,
-                count(distinct fbid_post) as num_posts_interacted_with,
-                count(distinct case when user_like then fbid_post else null end) as num_i_like,
-                count(distinct case when user_comment then fbid_post else null end) as num_i_comm,
-                count(distinct case when user_to then fbid_post else null end) as num_shared_w_me,
-                count(distinct fbid_poster) as num_friends_i_interacted_with
-            FROM {temp_table}
-            JOIN {full_table} on ({full_table}.fbid_user = {temp_table}.fbid_user)
-            GROUP BY 1
-        """.format(
-            final_table=final_aggregate_table,
-            temp_table=updated_users_table,
-            full_table=user_posts_full_table
-        ))
-
-
-def merge_poster_aggregates(
-    updated_users_table,
-    user_posts_full_table,
-    final_aggregate_table,
-    connection
-):
-    newconn = connection.connect()
-    with newconn.begin():
-        # delete from final table with changed userids
-        newconn.execute("""
-            DELETE
-            FROM {final_table}
-            WHERE fbid_poster in (select distinct fbid_poster from {temp_table})
-        """.format(
-            final_table=final_aggregate_table,
-            temp_table=updated_users_table
-        ))
-
-        # find posts that are in temp and insert into final
-        newconn.execute("""
-            INSERT INTO {final_table}
-            SELECT
-                {temp_table}.fbid_poster,
-                count(distinct fbid_post) num_posts,
-                count(distinct case when user_like then fbid_post else null end) as num_mine_liked,
-                count(distinct case when user_comment then fbid_post else null end) as num_mine_commented,
-                count(distinct case when user_to then fbid_post else null end) as num_i_shared_with,
-                count(distinct fbid_user) as num_friends_interacted_with_my_posts
-            FROM {temp_table}
-            JOIN {full_table} on ({full_table}.fbid_poster = {temp_table}.fbid_poster)
-            GROUP BY 1
-        """.format(
-            final_table=final_aggregate_table,
-            temp_table=updated_users_table,
-            full_table=user_posts_full_table
-        ))
-
-
-
-# functionified as a hack to get around differences between testing (stock
-# postgres) and production (redshift postgres) syntaxes
-def datediff_expression():
-    return "datediff('year', birthday, getdate())"
-
-
-def merge_user_aggregates(
-    updated_post_users_table,
-    updated_inbound_interactions_table,
-    updated_outbound_interactions_table,
-    final_aggregate_table,
-    engine
-):
-    temp_table = final_aggregate_table + '_updated'
-    logger.info('Finding users who had updated aggregates this batch')
-    with engine.connect() as connection:
-        connection.execute("""
-            CREATE TEMPORARY TABLE {temp_table} AS
-            select distinct fbid from (
-                select distinct fbid as fbid from {posts}
-                union select distinct fbid_user as fbid from {outbound}
-                union select distinct fbid_poster as fbid from {inbound}
-            ) sources
-        """.format(
-            temp_table=temp_table,
-            posts=updated_post_users_table,
-            outbound=updated_outbound_interactions_table,
-            inbound=updated_inbound_interactions_table
-        ))
-
-        logger.info(
-            '%s updated users found',
-            dbutils.get_rowcount(temp_table, connection=connection)
+    def load(self, bucket_name, common_prefix, version, source_folder, raw_table):
+        path = '/'.join((common_prefix, version, source_folder))
+        self.logger.info(
+            'Loading raw data into %s from s3://%s/%s',
+            raw_table,
+            bucket_name,
+            path
         )
+        with self.engine.connect() as connection:
+            with connection.begin():
+                dbutils.load_from_s3(
+                    connection,
+                    bucket_name,
+                    path,
+                    raw_table,
+                    create_statement=create_sql(raw_table, version)
+                )
+        self.log_rowcount(raw_table, '%s rows loaded into %s')
 
-        # delete from final table with changed userids
-        connection.execute("""
-            DELETE
-            FROM {final_table}
-            WHERE fbid in (select distinct fbid from {temp_table})
-        """.format(
-            final_table=final_aggregate_table,
-            temp_table=temp_table
-        ))
+    def calculate_users_with_new_posts(self, posts_incremental_table):
+        temp_table = posts_incremental_table + '_updated'
+        dbutils.drop_table_if_exists(temp_table, self.engine)
+        self.logger.info(
+            'Populating list of users with updated posts from %s',
+            posts_incremental_table
+        )
+        with self.engine.connect() as connection:
+            connection.execute("""
+                CREATE TABLE {temp_table} AS
+                SELECT distinct fbid_user as fbid
+                FROM {incremental_table}
+            """.format(
+                temp_table=temp_table,
+                incremental_table=posts_incremental_table
+            ))
 
-        # find posts that are in temp and insert into final
+        self.log_rowcount(temp_table)
+        return temp_table
+
+    def calculate_users_with_outbound_interactions(
+        self,
+        user_posts_incremental_table
+    ):
+        temp_table = user_posts_incremental_table + '_outbound_updated'
+        dbutils.drop_table_if_exists(temp_table, self.engine)
+        self.logger.info(
+            'Populating list of users with updated post interactions from %s',
+            user_posts_incremental_table
+        )
+        with self.engine.connect() as connection:
+            connection.execute("""
+                CREATE TABLE {temp_table} AS
+                SELECT distinct fbid_user as fbid_user
+                FROM {incremental_table}
+            """.format(
+                temp_table=temp_table,
+                incremental_table=user_posts_incremental_table
+            ))
+
+        self.log_rowcount(temp_table)
+        return temp_table
+
+
+    def calculate_users_with_inbound_interactions(
+        self,
+        user_posts_incremental_table
+    ):
+        connection = self.engine.connect()
+        temp_table = user_posts_incremental_table + '_inbound_updated'
+        dbutils.drop_table_if_exists(temp_table, connection)
+        # 1. get list of user ids with new data
+        self.logger.info(
+            'Populating list of posters with updated post interactions from %s',
+            user_posts_incremental_table
+        )
+        with connection.begin():
+            connection.execute("""
+                CREATE TABLE {temp_table} AS
+                SELECT distinct fbid_poster as fbid_poster
+                FROM {incremental_table}
+            """.format(
+                temp_table=temp_table,
+                incremental_table=user_posts_incremental_table
+            ))
+
+        self.log_rowcount(temp_table)
+        return temp_table
+
+    def find_new_posts(self, raw_table, final_table):
+        temp_table = raw_table + '_new'
+        dbutils.drop_table_if_exists(temp_table, self.engine)
+        # populate list of new post ids
+        self.logger.info(
+            'Populating list of new posts from %s compared with records in %s',
+            raw_table,
+            final_table
+        )
+        with self.engine.connect() as connection:
+            connection.execute("""
+                CREATE TABLE {temp_table} AS
+                SELECT {raw_table}.*
+                FROM {raw_table}
+                LEFT JOIN {final_table} USING (fbid_post)
+                WHERE {final_table}.fbid_post is NULL
+                LIMIT {limit}
+            """.format(
+                temp_table=temp_table,
+                raw_table=raw_table,
+                final_table=final_table,
+                limit=MAX_RECORDS_TO_DEDUPE,
+            ))
+
+        self.log_rowcount(temp_table)
+        return temp_table
+
+    def find_new_user_posts(self, incremental_table, final_table):
+        temp_table = incremental_table + '_new'
+        # populate list of new post ids
+        dbutils.drop_table_if_exists(temp_table, self.engine)
+        self.logger.info(
+            'Populating list of new records from %s compared with records in %s',
+            incremental_table,
+            final_table
+        )
+        with self.engine.connect() as connection:
+            connection.execute("""
+                CREATE TABLE {temp_table} AS
+                SELECT {incremental_table}.*
+                FROM {incremental_table}
+                LEFT JOIN {final_table} USING (fbid_post, fbid_user)
+                WHERE {final_table}.fbid_post is NULL
+            """.format(
+                temp_table=temp_table,
+                incremental_table=incremental_table,
+                final_table=final_table
+            ))
+
+        self.logger.info(
+            '%s new records found out of %s in total',
+            dbutils.get_rowcount(temp_table, engine=self.engine),
+            dbutils.get_rowcount(incremental_table, engine=self.engine),
+        )
+        return temp_table
+
+
+    def find_new_likes(self, incremental_table, final_table):
+        temp_table = incremental_table + '_new'
+        dbutils.drop_table_if_exists(temp_table, self.engine)
+        self.logger.info(
+            'Populating list of new records from %s compared with %s',
+            incremental_table, final_table
+        )
+        with self.engine.connect() as connection:
+            connection.execute("""
+                CREATE TABLE {temp_table} AS
+                SELECT distinct fbid, page_id
+                FROM {incremental_table}
+                LEFT JOIN {final_table} USING (fbid, page_id)
+                WHERE {final_table}.fbid is NULL
+            """.format(
+                temp_table=temp_table,
+                incremental_table=incremental_table,
+                final_table=final_table
+            ))
+
+        self.log_rowcount(temp_table)
+        return temp_table
+
+    def find_new_top_words(self, incremental_table, final_table):
+        temp_table = incremental_table + '_new'
+        dbutils.drop_table_if_exists(temp_table, self.engine)
+        self.logger.info(
+            'Populating list of new top words from %s compared with %s',
+            incremental_table, final_table
+        )
+        with self.engine.connect() as connection:
+            connection.execute("""
+                CREATE TABLE {temp_table} AS
+                SELECT fbid, max({incremental_table}.top_words) as top_words
+                FROM {incremental_table}
+                LEFT JOIN {final_table} USING (fbid)
+                WHERE {final_table}.fbid is NULL
+                GROUP BY 1
+            """.format(
+                temp_table=temp_table,
+                incremental_table=incremental_table,
+                final_table=final_table
+            ))
+
+        self.log_rowcount(temp_table)
+        return temp_table
+
+    # take deduped new posts from 'incremental_table' and merge them into 'final_table'
+    def merge_posts(self, deduped_table, final_table, connection):
+        self.logger.info(
+            'Inserting new rows from %s into %s',
+            deduped_table,
+            final_table
+        )
         connection.execute("""
             INSERT INTO {final_table}
-select
-    *,
-    case when num_posts > 0 then (last_activity - first_activity) / num_posts else NULL end as avg_time_between_activity,
-    case when num_posts > 0 then num_friends_interacted_with_my_posts / num_posts else NULL end as avg_friends_interacted_with_my_posts,
-    case when num_posts_interacted_with > 0 then num_friends_i_interacted_with / num_posts_interacted_with else NULL end as avg_friends_i_interacted_with
-from (
-    select
-        bool_or(user_clients.fbid is not null) as primary,
-        u.fbid,
-        max({datediff_expression}) as age,
-        max(first_activity) as first_activity,
-        max(last_activity) as last_activity,
-        count(distinct {edges_table}.fbid_source) as num_friends,
-        max(num_posts) as num_posts,
-        max(num_posts_interacted_with) as num_posts_interacted_with,
-        max(num_i_like) as num_i_like,
-        max(num_i_comm) as num_i_comm,
-        max(num_shared_w_me) as num_shared_w_me,
-        max(num_mine_liked) as num_mine_liked,
-        max(num_mine_commented) as num_mine_commented,
-        max(num_i_shared) as num_i_shared,
-        max(num_stat_upd) as num_stat_upd,
-        max(num_friends_interacted_with_my_posts) as num_friends_interacted_with_my_posts,
-        max(num_friends_i_interacted_with) as num_friends_i_interacted_with,
-        max(top_words) as top_words
-    from {temp_table}
-    join {users_table} u using (fbid)
-    left join {edges_table} on (u.fbid = {edges_table}.fbid_target)
-    left join {post_aggregates_table} on (u.fbid = {post_aggregates_table}.fbid)
-    left join {interactor_aggregates_table} me_as_interactor on (u.fbid = me_as_interactor.fbid_user)
-    left join {poster_aggregates_table} me_as_poster on (u.fbid = me_as_poster.fbid_poster)
-    left join {top_words_table} on (u.fbid = {top_words_table}.fbid)
-    left join user_clients on (u.fbid = user_clients.fbid)
-    group by u.fbid
-) sums
+            SELECT {deduped_table}.*
+            FROM {deduped_table}
         """.format(
-            final_table=final_aggregate_table,
-            temp_table=temp_table,
-            users_table=USERS_TABLE,
-            edges_table=EDGES_TABLE,
-            post_aggregates_table=POST_AGGREGATES_TABLE,
-            interactor_aggregates_table=INTERACTOR_AGGREGATES_TABLE,
-            poster_aggregates_table=POSTER_AGGREGATES_TABLE,
-            top_words_table=TOP_WORDS_TABLE,
-            datediff_expression=datediff_expression(),
+            final_table=final_table,
+            deduped_table=deduped_table,
         ))
+
+    # take deduped new user_posts from 'incremental_table' and merge them into 'final_table'
+    def merge_user_posts(self, deduped_table, final_table, connection):
+        # insert new versions into final table
+        self.logger.info(
+            'Inserting new rows from %s into %s',
+            deduped_table,
+            final_table
+        )
+        connection.execute("""
+            INSERT INTO {final_table}
+            SELECT {deduped_table}.*
+            FROM {deduped_table}
+        """.format(
+            final_table=final_table,
+            deduped_table=deduped_table,
+        ))
+
+    def merge_likes(self, deduped_table, final_table, connection):
+        # insert new versions into final table
+        self.logger.info(
+            'Inserting new rows from %s into %s',
+            deduped_table,
+            final_table
+        )
+        connection.execute("""
+            INSERT INTO {final_table} (fbid, page_id)
+            SELECT fbid, page_id
+            FROM {deduped_table}
+        """.format(
+            final_table=final_table,
+            deduped_table=deduped_table,
+        ))
+
+
+    def merge_top_words(self, deduped_table, final_table, connection):
+        # insert new versions into final table
+        self.logger.info(
+            'Inserting new rows from %s into %s',
+            deduped_table,
+            final_table
+        )
+        connection.execute("""
+            INSERT INTO {final_table} (fbid, top_words)
+            SELECT fbid, top_words
+            FROM {deduped_table}
+        """.format(
+            final_table=final_table,
+            deduped_table=deduped_table,
+        ))
+
+
+    def merge_post_aggregates(
+        self,
+        updated_users_table,
+        posts_full_table,
+        final_aggregate_table
+    ):
+        newconn = self.engine.connect()
+        with newconn.begin():
+            # 2. delete from final table with those userids
+            newconn.execute("""
+                DELETE
+                FROM {final_table}
+                WHERE fbid in (select distinct fbid from {temp_table})
+            """.format(
+                final_table=final_aggregate_table,
+                temp_table=updated_users_table
+            ))
+
+            # 3. find posts that are in temp and insert into final
+            newconn.execute("""
+                INSERT INTO {final_table}
+                SELECT
+                    fbid_user as fbid,
+                    date(min(ts)) as first_activity,
+                    date(max(ts)) as last_activity,
+                    count(distinct case when type = 'status' then fbid_post else null end) as num_stat_upd
+                FROM {temp_table}
+                JOIN {full_table} on ({full_table}.fbid_user = {temp_table}.fbid)
+                GROUP BY 1
+            """.format(
+                final_table=final_aggregate_table,
+                temp_table=updated_users_table,
+                full_table=posts_full_table
+            ))
+
+
+    def merge_interactor_aggregates(
+        self,
+        updated_users_table,
+        user_posts_full_table,
+        final_aggregate_table
+    ):
+        newconn = self.engine.connect()
+        with newconn.begin():
+            # delete from final table with changed userids
+            newconn.execute("""
+                DELETE
+                FROM {final_table}
+                WHERE fbid_user in (select distinct fbid_user from {temp_table})
+            """.format(
+                final_table=final_aggregate_table,
+                temp_table=updated_users_table
+            ))
+
+            # find posts that are in temp and insert into final
+            newconn.execute("""
+                INSERT INTO {final_table}
+                SELECT
+                    {temp_table}.fbid_user,
+                    count(distinct fbid_post) as num_posts_interacted_with,
+                    count(distinct case when user_like then fbid_post else null end) as num_i_like,
+                    count(distinct case when user_comment then fbid_post else null end) as num_i_comm,
+                    count(distinct case when user_to then fbid_post else null end) as num_shared_w_me,
+                    count(distinct fbid_poster) as num_friends_i_interacted_with
+                FROM {temp_table}
+                JOIN {full_table} on ({full_table}.fbid_user = {temp_table}.fbid_user)
+                GROUP BY 1
+            """.format(
+                final_table=final_aggregate_table,
+                temp_table=updated_users_table,
+                full_table=user_posts_full_table
+            ))
+
+
+    def merge_poster_aggregates(
+        self,
+        updated_users_table,
+        user_posts_full_table,
+        final_aggregate_table
+    ):
+        newconn = self.engine.connect()
+        with newconn.begin():
+            # delete from final table with changed userids
+            newconn.execute("""
+                DELETE
+                FROM {final_table}
+                WHERE fbid_poster in (select distinct fbid_poster from {temp_table})
+            """.format(
+                final_table=final_aggregate_table,
+                temp_table=updated_users_table
+            ))
+
+            # find posts that are in temp and insert into final
+            newconn.execute("""
+                INSERT INTO {final_table}
+                SELECT
+                    {temp_table}.fbid_poster,
+                    count(distinct fbid_post) num_posts,
+                    count(distinct case when user_like then fbid_post else null end) as num_mine_liked,
+                    count(distinct case when user_comment then fbid_post else null end) as num_mine_commented,
+                    count(distinct case when user_to then fbid_post else null end) as num_i_shared_with,
+                    count(distinct fbid_user) as num_friends_interacted_with_my_posts
+                FROM {temp_table}
+                JOIN {full_table} on ({full_table}.fbid_poster = {temp_table}.fbid_poster)
+                GROUP BY 1
+            """.format(
+                final_table=final_aggregate_table,
+                temp_table=updated_users_table,
+                full_table=user_posts_full_table
+            ))
+
+    # functionified as a hack to get around differences between testing (stock
+    # postgres) and production (redshift postgres) syntaxes
+    def datediff_expression(self):
+        return "datediff('year', birthday, getdate())"
+
+    def merge_user_aggregates(
+        self,
+        updated_post_users_table,
+        updated_inbound_interactions_table,
+        updated_outbound_interactions_table,
+        final_aggregate_table,
+    ):
+        temp_table = final_aggregate_table + '_updated'
+        self.logger.info('Finding users who had updated aggregates this batch')
+        with self.engine.connect() as connection:
+            connection.execute("""
+                CREATE TEMPORARY TABLE {temp_table} AS
+                select distinct fbid from (
+                    select distinct fbid as fbid from {posts}
+                    union select distinct fbid_user as fbid from {outbound}
+                    union select distinct fbid_poster as fbid from {inbound}
+                ) sources
+            """.format(
+                temp_table=temp_table,
+                posts=updated_post_users_table,
+                outbound=updated_outbound_interactions_table,
+                inbound=updated_inbound_interactions_table
+            ))
+
+            self.logger.info(
+                '%s updated users found',
+                dbutils.get_rowcount(temp_table, connection=connection)
+            )
+
+            # delete from final table with changed userids
+            connection.execute("""
+                DELETE
+                FROM {final_table}
+                WHERE fbid in (select distinct fbid from {temp_table})
+            """.format(
+                final_table=final_aggregate_table,
+                temp_table=temp_table
+            ))
+
+            # find posts that are in temp and insert into final
+            connection.execute("""
+                INSERT INTO {final_table}
+    select
+        *,
+        case when num_posts > 0 then (last_activity - first_activity) / num_posts else NULL end as avg_time_between_activity,
+        case when num_posts > 0 then num_friends_interacted_with_my_posts / num_posts else NULL end as avg_friends_interacted_with_my_posts,
+        case when num_posts_interacted_with > 0 then num_friends_i_interacted_with / num_posts_interacted_with else NULL end as avg_friends_i_interacted_with
+    from (
+        select
+            bool_or(user_clients.fbid is not null) as primary,
+            u.fbid,
+            max({datediff_expression}) as age,
+            max(first_activity) as first_activity,
+            max(last_activity) as last_activity,
+            count(distinct {edges_table}.fbid_source) as num_friends,
+            max(num_posts) as num_posts,
+            max(num_posts_interacted_with) as num_posts_interacted_with,
+            max(num_i_like) as num_i_like,
+            max(num_i_comm) as num_i_comm,
+            max(num_shared_w_me) as num_shared_w_me,
+            max(num_mine_liked) as num_mine_liked,
+            max(num_mine_commented) as num_mine_commented,
+            max(num_i_shared) as num_i_shared,
+            max(num_stat_upd) as num_stat_upd,
+            max(num_friends_interacted_with_my_posts) as num_friends_interacted_with_my_posts,
+            max(num_friends_i_interacted_with) as num_friends_i_interacted_with,
+            max(top_words) as top_words
+        from {temp_table}
+        join {users_table} u using (fbid)
+        left join {edges_table} on (u.fbid = {edges_table}.fbid_target)
+        left join {post_aggregates_table} on (u.fbid = {post_aggregates_table}.fbid)
+        left join {interactor_aggregates_table} me_as_interactor on (u.fbid = me_as_interactor.fbid_user)
+        left join {poster_aggregates_table} me_as_poster on (u.fbid = me_as_poster.fbid_poster)
+        left join {top_words_table} on (u.fbid = {top_words_table}.fbid)
+        left join user_clients on (u.fbid = user_clients.fbid)
+        group by u.fbid
+    ) sums
+            """.format(
+                final_table=final_aggregate_table,
+                temp_table=temp_table,
+                users_table=USERS_TABLE,
+                edges_table=EDGES_TABLE,
+                post_aggregates_table=POST_AGGREGATES_TABLE,
+                interactor_aggregates_table=INTERACTOR_AGGREGATES_TABLE,
+                poster_aggregates_table=POSTER_AGGREGATES_TABLE,
+                top_words_table=TOP_WORDS_TABLE,
+                datediff_expression=self.datediff_expression(),
+            ))
 
 # Despite what the docs say, datetime.strptime() format doesn't like %z
 # see: http://stackoverflow.com/questions/526406/python-time-to-age-part-2-timezones/526450#526450
@@ -1035,7 +1003,7 @@ class FeedPostFromJson(object):
 class FeedFromS3(object):
     """Holds an entire feed from a single user crawl"""
 
-    def __init__(self, key):
+    def __init__(self, key, logger):
         self.initialize()
         prim_id, fbid = key.name.split("_")
 
@@ -1202,11 +1170,12 @@ class FeedFromS3(object):
 
 
 class FeedChunk(object):
-    def __init__(self, vectorizer):
+    def __init__(self, vectorizer, logger):
         self.counts = dict()
         self.strings = dict()
         self.writers = dict()
         self.vectorizer = vectorizer
+        self.logger = logger
         for entity in ENTITIES:
             self.counts[entity] = 0
             self.strings[entity] = StringIO()
@@ -1220,7 +1189,7 @@ class FeedChunk(object):
         feed = None
         for attempt in range(3):
             try:
-                feed = FeedFromS3(key)
+                feed = FeedFromS3(key, self.logger)
                 break
             except (httplib.IncompleteRead, socket.error):
                 time.sleep(1)

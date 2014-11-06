@@ -90,19 +90,20 @@ def load_from_s3(connection, bucket_name, key_name, table_name, delim="\t", crea
         if create_statement:
             drop_table_if_exists(table_name, connection)
             connection.execute(create_statement)
-        connection.execute("""
-            COPY {table} FROM 's3://{bucket}/{key}'
-            CREDENTIALS 'aws_access_key_id={access};aws_secret_access_key={secret}'
-            DELIMITER '{delim}' TRUNCATECOLUMNS ACCEPTINVCHARS NULL AS '\\000' IGNOREBLANKLINES
-        """.format(
-                delim=delim,
-                table=table_name,
-                bucket=bucket_name,
-                key=key_name,
-                access=AWS_ACCESS_KEY,
-                secret=AWS_SECRET_KEY,
+        with connection.begin():
+            connection.execute("""
+                COPY {table} FROM 's3://{bucket}/{key}'
+                CREDENTIALS 'aws_access_key_id={access};aws_secret_access_key={secret}'
+                DELIMITER '{delim}' TRUNCATECOLUMNS ACCEPTINVCHARS NULL AS '\\000' IGNOREBLANKLINES
+            """.format(
+                    delim=delim,
+                    table=table_name,
+                    bucket=bucket_name,
+                    key=key_name,
+                    access=AWS_ACCESS_KEY,
+                    secret=AWS_SECRET_KEY,
+                )
             )
-        )
     except ProgrammingError:
         info("error loading: \n %s", get_load_errs(connection))
         raise

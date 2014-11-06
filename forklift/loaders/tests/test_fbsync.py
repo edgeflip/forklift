@@ -1,8 +1,10 @@
-import datetime
+import logging
 from mock import patch
 from forklift.loaders.fbsync import FeedFromS3, FeedPostFromJson, FeedChunk, DEFAULT_DELIMITER, POSTS, LINKS, LIKES, TOP_WORDS, ENTITIES
 from forklift.testing import ForkliftTransactionalTestCase
 from sklearn.feature_extraction.text import TfidfVectorizer
+
+logger = logging.getLogger(__name__)
 
 
 class FBSyncTestCase(ForkliftTransactionalTestCase):
@@ -130,7 +132,7 @@ class FBSyncTestCase(ForkliftTransactionalTestCase):
     def test_FeedChunk_merge_feed(self):
         vectorizer = TfidfVectorizer(input='content')
         vectorizer.fit([self.message])
-        chunk = FeedChunk(vectorizer)
+        chunk = FeedChunk(vectorizer, logger)
         chunk.merge_feed(self.feed)
         self.assertEquals(
             chunk.counts,

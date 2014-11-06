@@ -27,9 +27,10 @@ RDS_CACHE_URL = "postgresql://{user}:{pass}@{host}:{port}/{db}".format(**rds_cac
 # Celery
 BROKER_URL = 'amqp://{user}:{pass}@{host}:5672/{vhost}'.format(**RABBITMQ)
 CELERY_IMPORTS = ('forklift.tasks', )
-CELERY_RESULT_BACKEND = ''
+CELERY_RESULT_BACKEND = 'redis://localhost'
 CELERYD_PREFETCH_MULTIPLIER = 1
 CELERY_ACCEPT_CONTENT = ['pickle']
+CELERY_MAX_TASKS_PER_CHILD = 5
 
 QUEUE_ARGS = {'x-ha-policy': 'all'}
 CELERY_QUEUES = (
@@ -38,6 +39,7 @@ CELERY_QUEUES = (
     Queue('ip_hourly', routing_key='hourly.ip', queue_arguments=QUEUE_ARGS),
     Queue('visit_hourly', routing_key='hourly.visit', queue_arguments=QUEUE_ARGS),
     Queue('misc_hourly', routing_key='hourly.misc', queue_arguments=QUEUE_ARGS),
+    Queue('fbsync', routing_key='fbsync', queue_arguments=QUEUE_ARGS),
 )
 
 CELERY_ROUTES = {
@@ -46,6 +48,8 @@ CELERY_ROUTES = {
     'forklift.tasks.ip_load_hour': {'queue': 'ip_hourly', 'routing_key': 'hourly.ip'},
     'forklift.tasks.visit_load_hour': {'queue': 'visit_hourly', 'routing_key': 'hourly.visit'},
     'forklift.tasks.misc_load_hour': {'queue': 'misc_hourly', 'routing_key': 'hourly.misc'},
+    'forklift.tasks.fbsync_process': {'queue': 'fbsync', 'routing_key': 'fbsync'},
+    'forklift.tasks.fbsync_load': {'queue': 'fbsync', 'routing_key': 'fbsync'},
 }
 
 LOGGING = {
@@ -80,7 +84,10 @@ LOGGING = {
         },
         '__main__': {
             'handlers': ['console'],
-        }
+        },
+        'forklift.tasks': {
+            'handlers': ['console', 'syslog'],
+        },
     }
 }
 
@@ -98,9 +105,9 @@ logging.config.dictConfig(LOGGING)
 def configure_logging(sender=None, **kwargs):
     logging.config.dictConfig(LOGGING)
 
+
 IP_SLUG = 'ip'
 FBID_SLUG = 'fbid'
 VISIT_SLUG = 'visit'
 FRIEND_SLUG = 'friend_fbid'
 MISC_SLUG = 'misc'
-
