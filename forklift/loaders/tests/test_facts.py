@@ -376,7 +376,8 @@ class FBSyncTestCase(ForkliftTransactionalTestCase):
 
     def setUp(self):
         self.transaction = self.connection.begin_nested()
-        fbsync.datediff_expression = lambda: "DATE_PART('year', now()) - DATE_PART('year', birthday)"
+        self.loader = fbsync.FBSyncLoader(engine, logger)
+        self.loader.datediff_expression = lambda: "DATE_PART('year', now()) - DATE_PART('year', birthday)"
 
 
     def tearDown(self):
@@ -438,7 +439,7 @@ class FBSyncTestCase(ForkliftTransactionalTestCase):
         # 2. run the routine
         with engine.connect() as connection:
             drop_table_if_exists(self.posts_incremental_table, connection)
-        fbsync.dedupe(self.posts_raw_table, self.posts_incremental_table, self.version, engine)
+        self.loader.dedupe(self.posts_raw_table, self.posts_incremental_table, self.version)
 
         # 3. make sure that the data got transferred to the final table without the dupe
         self.assert_num_results( 2, self.posts_raw_table)
@@ -459,7 +460,7 @@ class FBSyncTestCase(ForkliftTransactionalTestCase):
 
             self.__class__.insertDummyPost(connection, table=self.posts_incremental_table, post_id=new_post_id)
 
-            fbsync.merge_posts(self.posts_incremental_table, self.posts_table, connection)
+            self.loader.merge_posts(self.posts_incremental_table, self.posts_table, connection)
 
         # 4. make sure that data got transferred into the final table alongside the old stuff
         self.assert_num_results(1, self.posts_table, post_id=new_post_id)
@@ -480,7 +481,7 @@ class FBSyncTestCase(ForkliftTransactionalTestCase):
             self.insertDummyUserPost(connection, self.EXISTING_POST_ID, new_user_id, table=self.user_posts_incremental_table)
 
             # 2. do it
-            fbsync.merge_user_posts(self.user_posts_incremental_table, self.user_posts_table, connection)
+            self.loader.merge_user_posts(self.user_posts_incremental_table, self.user_posts_table, connection)
 
             # 3. make sure we have data, tied to the correct post
             self.assertEqual(2, get_rowcount(self.user_posts_table, connection))
@@ -499,7 +500,7 @@ class FBSyncTestCase(ForkliftTransactionalTestCase):
             self.insertDummyPageLike(connection, first_user)
             self.insertDummyPageLike(connection, second_user)
 
-            fbsync.merge_likes(self.page_likes_incremental_table, self.page_likes_table, connection)
+            self.loader.merge_likes(self.page_likes_incremental_table, self.page_likes_table, connection)
 
             self.assertEqual(2, get_rowcount(self.page_likes_table, connection))
 
@@ -515,7 +516,7 @@ class FBSyncTestCase(ForkliftTransactionalTestCase):
             self.insertDummyTopWords(connection, first_user)
             self.insertDummyTopWords(connection, second_user)
 
-            fbsync.merge_top_words(self.top_words_incremental_table, self.top_words_table, connection)
+            self.loader.merge_top_words(self.top_words_incremental_table, self.top_words_table, connection)
 
             self.assertEqual(2, get_rowcount(self.top_words_table, connection))
 
@@ -528,7 +529,7 @@ class FBSyncTestCase(ForkliftTransactionalTestCase):
                 connection
             )
             self.__class__.insertDummyPost(connection, table=self.posts_incremental_table, post_id=post_id)
-        updated_table = fbsync.calculate_users_with_new_posts(self.posts_incremental_table, engine)
+        updated_table = self.loader.calculate_users_with_new_posts(self.posts_incremental_table)
         self.assertEqual(1, get_rowcount(updated_table, engine))
 
     def test_calculate_users_with_outbound_interactions(self):
@@ -557,8 +558,8 @@ class FBSyncTestCase(ForkliftTransactionalTestCase):
                 user_id=85,
                 table=table,
             )
-        updated_table = fbsync.calculate_users_with_outbound_interactions(
-            table, engine
+        updated_table = self.loader.calculate_users_with_outbound_interactions(
+            table
         )
         self.assertEqual(2, get_rowcount(updated_table, engine))
 
@@ -582,8 +583,8 @@ class FBSyncTestCase(ForkliftTransactionalTestCase):
                 user_id=85,
                 table=table,
             )
-        updated_table = fbsync.calculate_users_with_inbound_interactions(
-            table, engine
+        updated_table = self.loader.calculate_users_with_inbound_interactions(
+            table
         )
         self.assertEqual(1, get_rowcount(updated_table, engine))
 
@@ -625,11 +626,10 @@ class FBSyncTestCase(ForkliftTransactionalTestCase):
             )
 
         try:
-            fbsync.merge_post_aggregates(
+            self.loader.merge_post_aggregates(
                 updated_users_table,
                 self.posts_table,
-                fbsync.POST_AGGREGATES_TABLE,
-                engine
+                fbsync.POST_AGGREGATES_TABLE
             )
 
             self.assertEqual(
@@ -661,11 +661,10 @@ class FBSyncTestCase(ForkliftTransactionalTestCase):
                     ts=mar
                 )
 
-            fbsync.merge_post_aggregates(
+            self.loader.merge_post_aggregates(
                 updated_users_table,
                 self.posts_table,
-                fbsync.POST_AGGREGATES_TABLE,
-                engine
+                fbsync.POST_AGGREGATES_TABLE
             )
 
             results = engine.execute(
@@ -700,11 +699,10 @@ class FBSyncTestCase(ForkliftTransactionalTestCase):
             self.insertDummyUserPost(connection, 3, 2, table=self.user_posts_table)
 
         try:
-            fbsync.merge_interactor_aggregates(
+            self.loader.merge_interactor_aggregates(
                 updated_users_table,
                 self.user_posts_table,
-                fbsync.INTERACTOR_AGGREGATES_TABLE,
-                engine
+                fbsync.INTERACTOR_AGGREGATES_TABLE
             )
 
             results = engine.execute(
@@ -742,11 +740,10 @@ class FBSyncTestCase(ForkliftTransactionalTestCase):
             self.insertDummyUserPost(connection, 3, 99, poster_id=2, table=self.user_posts_table)
 
         try:
-            fbsync.merge_poster_aggregates(
+            self.loader.merge_poster_aggregates(
                 updated_users_table,
                 self.user_posts_table,
-                fbsync.POSTER_AGGREGATES_TABLE,
-                engine
+                fbsync.POSTER_AGGREGATES_TABLE
             )
 
             results = engine.execute(
@@ -794,7 +791,7 @@ class FBSyncTestCase(ForkliftTransactionalTestCase):
         load_mock.side_effect = fake_load_from_s3
 
         # 3. the s3 arguments don't really matter here
-        fbsync.add_new_data('sourcefolder','doesntmatter',str(self.version),'1','1','1','1', engine)
+        self.loader.add_new_data('sourcefolder','doesntmatter',str(self.version),'1','1','1','1')
 
         with engine.connect() as connection:
             # 4. verify both tables received correct data

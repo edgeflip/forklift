@@ -318,7 +318,7 @@ class FBSyncLoader(object):
         self.engine = engine
         self.logger = logger
 
-    def log_rowcount(self, table_name, custom_msg):
+    def log_rowcount(self, table_name, custom_msg=None):
         msg = custom_msg or '%s records found in %s'
         self.logger.info(
             msg,
@@ -471,8 +471,7 @@ class FBSyncLoader(object):
         with self.engine.connect() as connection:
             new_table = finder_routine(
                 raw_table,
-                final_table,
-                connection
+                final_table
             )
             unmerged_row_count = dbutils.get_rowcount(new_table, engine=self.engine)
             while unmerged_row_count > 0:
@@ -480,8 +479,7 @@ class FBSyncLoader(object):
                 self.dedupe(
                     new_table,
                     incremental_table,
-                    version,
-                    connection
+                    version
                 )
                 merger_routine(incremental_table, final_table, connection)
                 dbutils.drop_table(incremental_table, connection)
@@ -489,7 +487,6 @@ class FBSyncLoader(object):
                 new_table = finder_routine(
                     raw_table,
                     final_table,
-                    connection
                 )
                 unmerged_row_count = dbutils.get_rowcount(new_table, engine=self.engine)
 
@@ -687,7 +684,7 @@ class FBSyncLoader(object):
 
     # take deduped new posts from 'incremental_table' and merge them into 'final_table'
     def merge_posts(self, deduped_table, final_table, connection):
-        logger.info(
+        self.logger.info(
             'Inserting new rows from %s into %s',
             deduped_table,
             final_table
@@ -756,10 +753,9 @@ class FBSyncLoader(object):
         self,
         updated_users_table,
         posts_full_table,
-        final_aggregate_table,
-        connection
+        final_aggregate_table
     ):
-        newconn = connection.connect()
+        newconn = self.engine.connect()
         with newconn.begin():
             # 2. delete from final table with those userids
             newconn.execute("""
@@ -793,10 +789,9 @@ class FBSyncLoader(object):
         self,
         updated_users_table,
         user_posts_full_table,
-        final_aggregate_table,
-        connection
+        final_aggregate_table
     ):
-        newconn = connection.connect()
+        newconn = self.engine.connect()
         with newconn.begin():
             # delete from final table with changed userids
             newconn.execute("""
@@ -832,10 +827,9 @@ class FBSyncLoader(object):
         self,
         updated_users_table,
         user_posts_full_table,
-        final_aggregate_table,
-        connection
+        final_aggregate_table
     ):
-        newconn = connection.connect()
+        newconn = self.engine.connect()
         with newconn.begin():
             # delete from final table with changed userids
             newconn.execute("""
@@ -866,24 +860,21 @@ class FBSyncLoader(object):
                 full_table=user_posts_full_table
             ))
 
-
-
-# functionified as a hack to get around differences between testing (stock
-# postgres) and production (redshift postgres) syntaxes
-    def datediff_expression():
+    # functionified as a hack to get around differences between testing (stock
+    # postgres) and production (redshift postgres) syntaxes
+    def datediff_expression(self):
         return "datediff('year', birthday, getdate())"
 
-
     def merge_user_aggregates(
+        self,
         updated_post_users_table,
         updated_inbound_interactions_table,
         updated_outbound_interactions_table,
         final_aggregate_table,
-        engine
     ):
         temp_table = final_aggregate_table + '_updated'
-        logger.info('Finding users who had updated aggregates this batch')
-        with engine.connect() as connection:
+        self.logger.info('Finding users who had updated aggregates this batch')
+        with self.engine.connect() as connection:
             connection.execute("""
                 CREATE TEMPORARY TABLE {temp_table} AS
                 select distinct fbid from (
@@ -898,7 +889,7 @@ class FBSyncLoader(object):
                 inbound=updated_inbound_interactions_table
             ))
 
-            logger.info(
+            self.logger.info(
                 '%s updated users found',
                 dbutils.get_rowcount(temp_table, connection=connection)
             )
@@ -960,7 +951,7 @@ class FBSyncLoader(object):
                 interactor_aggregates_table=INTERACTOR_AGGREGATES_TABLE,
                 poster_aggregates_table=POSTER_AGGREGATES_TABLE,
                 top_words_table=TOP_WORDS_TABLE,
-                datediff_expression=datediff_expression(),
+                datediff_expression=self.datediff_expression(),
             ))
 
 # Despite what the docs say, datetime.strptime() format doesn't like %z

@@ -2,7 +2,7 @@ from sqlalchemy.exc import ProgrammingError
 from forklift.testing import ForkliftTestCase, ForkliftTransactionalTestCase
 from forklift.db.base import redshift_engine, rds_source_engine
 from forklift.db.utils import staging_table, load_from_s3, deploy_table, drop_table_if_exists, copy_to_redshift
-from mock import Mock, patch
+from mock import MagicMock, patch
 import os
 import tempfile
 
@@ -24,7 +24,7 @@ class DbTestCase(ForkliftTestCase):
 
 
     def test_load_from_s3(self):
-        connectionMock = Mock()
+        connectionMock = MagicMock()
         expected_bucket = 'test_bucket'
         expected_key = 'test_key'
         expected_table = 'test_table'
@@ -39,7 +39,7 @@ class DbTestCase(ForkliftTestCase):
 
     @patch('forklift.db.utils.drop_table_if_exists')
     def test_load_from_s3_with_create(self, drop_table_mock):
-        connectionMock = Mock()
+        connectionMock = MagicMock()
         create = 'test query'
         load_from_s3(connectionMock, 'bucket', 'key', 'table', create_statement=create)
         self.assertEqual(connectionMock.execute.call_count, 2)
