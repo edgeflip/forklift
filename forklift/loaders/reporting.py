@@ -7,8 +7,6 @@ from forklift.db.utils import (
 import logging
 logger = logging.getLogger(__name__)
 
-OUR_IP_STRING = ','.join("'{}'".format(ip) for ip in ('38.88.227.194',))
-
 
 def staging_table_name(table):
     return '{}_staging'.format(table)
@@ -56,7 +54,8 @@ AGGREGATES = {
             inner join clients cl using (client_id)
             inner join campaign_properties using (campaign_id)
             inner join campaigns root_campaign on (root_campaign.campaign_id = campaign_properties.root_campaign_id)
-            WHERE visits.ip not in ({})
+            left join edgeflip_fbids on (edgeflip_fbids.fbid = v.fbid)
+            WHERE edgeflip_fbids is null
             AND campaigns.delete_dt is null
             GROUP BY root_campaign.campaign_id, hour
     """,
@@ -71,7 +70,8 @@ AGGREGATES = {
             inner join clients cl using (client_id)
             inner join campaign_properties using (campaign_id)
             inner join campaigns root_campaign on (root_campaign.campaign_id = campaign_properties.root_campaign_id)
-            WHERE visits.ip not in ({})
+            left join edgeflip_fbids on (edgeflip_fbids.fbid = v.fbid)
+            WHERE edgeflip_fbids is null
             AND campaigns.delete_dt is null
             GROUP BY root_campaign.campaign_id
     """,
@@ -84,7 +84,8 @@ AGGREGATES = {
             inner join visitors v using (visitor_id)
             inner join campaigns using (campaign_id)
             inner join clients cl using (client_id)
-            WHERE visits.ip not in ({})
+            left join edgeflip_fbids on (edgeflip_fbids.fbid = v.fbid)
+            WHERE edgeflip_fbids is null
             AND campaigns.delete_dt is null
             GROUP BY client_id
         """
@@ -106,10 +107,7 @@ def refresh_aggregate_table(engine, table_name, query):
     with engine.connect() as connection:
         staging_table = staging_table_name(table_name)
         drop_table_if_exists(staging_table, connection)
-        bound_query = query.format(
-            metric_expressions(),
-            OUR_IP_STRING
-        )
+        bound_query = query.format(metric_expressions())
         full_statement = 'CREATE TABLE {} AS {}'.format(staging_table, bound_query)
         logger.debug('Calculating aggregates for {}'.format(table_name))
         with connection.begin():
