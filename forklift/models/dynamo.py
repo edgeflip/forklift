@@ -1,6 +1,7 @@
 from faraday import (
     Item,
     ItemField,
+    ItemLinkField,
     NUMBER,
     DATETIME,
     STRING_SET,
@@ -56,3 +57,12 @@ class User(Item):
     sports = ItemField(data_type=JSON)
     tv = ItemField(data_type=STRING_SET)
     wall_count = ItemField(data_type=NUMBER)
+
+
+class Token(Item):
+    fbid = HashKeyField(data_type=NUMBER)
+    appid = RangeKeyField(data_type=NUMBER)
+    expires = ItemField(data_type=DATETIME)
+    token = ItemField()
+
+    user = ItemLinkField('User', db_key=fbid)

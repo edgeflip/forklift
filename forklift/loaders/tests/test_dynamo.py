@@ -2,7 +2,7 @@ import logging
 from forklift.db.base import redshift_engine
 from forklift.db.utils import get_rowcount
 from forklift.loaders.dynamo import DynamoLoader, USERS_TABLE, EDGES_TABLE
-from forklift.models.dynamo import User, IncomingEdge
+from forklift.models.dynamo import User, IncomingEdge, Token
 from faraday import db
 from mock import patch
 import datetime
@@ -88,10 +88,12 @@ class DynamoSyncTestCase(DynamoTestCase):
             stat_comms=3,
             wall_comms=5,
         )
+        Token.items.create(
+            fbid=primary,
+            appid=1, # doesn't matter
+            expires=datetime.datetime.utcnow(),
+        )
         loader = DynamoLoader(logger, redshift_engine.connect())
-
-        # why did amazon insist on changing syntax for stuff like this?
-        loader.oneweek_expression = lambda: "CURRENT_DATE - INTERVAL '1 week'"
 
         # run the sync process
         loader.sync()

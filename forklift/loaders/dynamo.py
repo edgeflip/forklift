@@ -4,9 +4,11 @@ import logging
 from cStringIO import StringIO
 import time
 import unicodecsv
+import itertools
+import operator
 
 from forklift.db import utils as dbutils
-from forklift.models.dynamo import IncomingEdge, User
+from forklift.models.dynamo import IncomingEdge, User, Token
 from forklift.s3.utils import write_file_to_key
 
 USER_COLUMNS = (
@@ -84,19 +86,15 @@ class DynamoLoader(object):
         self.redshift_connection = redshift_connection
         self.s3_bucket = S3_BUCKET
 
-    def oneweek_expression(self):
-        return "dateadd(week, -1, getdate())"
-
     def get_primaries(self):
         # distinct primaries missing from users
         result = self.redshift_connection.execute("""
             SELECT DISTINCT(user_clients.fbid) AS fbid FROM {} u
             RIGHT JOIN user_clients using (fbid)
-            WHERE
-        u.fname IS NULL or
-        (u.fname = ''AND updated < {})
-        """.format(USERS_TABLE, self.oneweek_expression()))
-        fbids = [row['fbid'] for row in result.fetchall()]
+            WHERE u.fname IS NULL or u.fname = ''
+        """.format(USERS_TABLE))
+        fbids = set([row['fbid'] for row in result.fetchall()])
+
         return fbids
 
     def get_secondaries(self):
@@ -104,9 +102,8 @@ class DynamoLoader(object):
         result = self.redshift_connection.execute("""
             SELECT DISTINCT(e.fbid_source) AS fbid FROM {} u
         RIGHT JOIN {} e ON u.fbid=e.fbid_source
-        WHERE u.fname IS NULL or
-        (u.fname = '' AND u.updated < {})
-        """.format(USERS_TABLE, EDGES_TABLE, self.oneweek_expression()))
+        WHERE u.fname IS NULL or u.fname = ''
+        """.format(USERS_TABLE, EDGES_TABLE))
         fbids = [row['fbid'] for row in result.fetchall()]
         return fbids
 
@@ -122,6 +119,15 @@ class DynamoLoader(object):
             """.format(USERS_TABLE, EDGES_TABLE))
 
         return [row['fbid'] for row in result.fetchall()]
+
+    def get_active_fbids(self):
+        tokens = Token.items.scan(
+            expires__gt=datetime.datetime.utcnow() - datetime.timedelta(days=14)
+        )
+        # Tokens should already be grouped by hash (fbid); group-by:
+        fbid_tokens = itertools.groupby(tokens, operator.attrgetter('fbid'))
+        return set(fbid for (fbid, _) in fbid_tokens)
+
 
     def edges_to_key(self, fbids, key_name):
         stringfile = StringIO()
@@ -154,27 +160,15 @@ class DynamoLoader(object):
     def fbids_to_key(self, fbids, keyname):
         stringfile = StringIO()
         writer = unicodecsv.writer(stringfile, encoding='utf-8', delimiter="\t")
-        for fbid in fbids:
+        updated_users = User.items.batch_get([{'fbid': fbid} for fbid in fbids])
+        for updated_user in updated_users:
             data = defaultdict(lambda: None)
-            try:
-                self.logger.debug('Seeking key %s in dynamo', fbid)
-                dyndata = User.items.get_item(fbid=fbid)
-                data.update(dyndata)
-
-                if 'birthday' in data and data['birthday']:
-                    data['birthday'] = data['birthday'].date()
-
-                if 'updated' not in data or not data['updated']:
-                    # some sort of blank row
-                    # track updated just to know when we went looking for it
-                    data['updated'] = datetime.datetime.utcnow()
-
-
-            except User.DoesNotExist:
-                data['updated'] = datetime.datetime.utcnow()
+            data.update(updated_user)
+            if 'birthday' in data and data['birthday']:
+                data['birthday'] = data['birthday'].date()
 
             writer.writerow([
-                fbid if field == 'fbid' else transform_field(data[field])
+                transform_field(data[field])
                 for field in USER_COLUMNS
             ])
 
@@ -218,10 +212,14 @@ class DynamoLoader(object):
         secondaries_key = "secondaries.csv"
         edges_key = "edges.csv"
 
-        fbids = self.get_primaries()
-        self.logger.info("found %s primaries", len(fbids))
-        if len(fbids) > 0:
-            self.fbids_to_key(fbids, primaries_key)
+        missing_primaries = self.get_primaries()
+        self.logger.info("found %s missing primaries", len(missing_primaries))
+        active_fbids = self.get_active_fbids()
+        self.logger.info("found %s recently active tokens", len(active_fbids))
+        fbids_to_try = missing_primaries & active_fbids
+        self.logger.info("found %s fbids suitable to search for", len(fbids_to_try))
+        if len(fbids_to_try) > 0:
+            self.fbids_to_key(fbids_to_try, primaries_key)
             self.load_users(
                 primaries_key,
                 'users_staging',
