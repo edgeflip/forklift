@@ -3,10 +3,7 @@ from forklift.db.base import redshift_engine
 from forklift.db.utils import get_rowcount
 from forklift.loaders.dynamo import DynamoLoader, USERS_TABLE, EDGES_TABLE
 from forklift.models.dynamo import User, IncomingEdge
-from faraday import (
-    db,
-    loading,
-)
+from faraday import db
 from mock import patch
 import datetime
 import os
@@ -16,20 +13,6 @@ logger = logging.getLogger(__name__)
 
 
 class DynamoTestCase(TestCase):
-
-    @classmethod
-    def teardown_class(cls):
-        # Concrete test classes may define their Item classes in setup_class.
-        # Their tables will be created & destroyed per test run by setup &
-        # teardown, and the Python class will be hidden within the test class's
-        # scope; however, the Item definition cache on which build/destroy rely
-        # will be polluted.
-        # Therefore, clear all non-namespaced definitions from the cache;
-        # (to avoid this, and e.g. to define your Item at the module level /
-        # outside setup_class, set Meta.app_name to something novel):
-        for model in loading.cache.values():
-            if not model._meta.app_name:
-                del loading.cache[model._meta.item_name]
 
     def setUp(self):
         db.build()

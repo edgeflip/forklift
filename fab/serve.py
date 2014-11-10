@@ -5,11 +5,10 @@ import os
 
 @fab.task(name='celery')
 def start_celery():
+    config_filename = 'faraday.yaml'
     environment = os.environ['ENV'] if 'ENV' in os.environ else 'development'
-    if environment in ['staging', 'production']:
-        faraday_conf = '/etc/forklift/faraday.yaml'
-    else:
-        faraday_conf = 'faraday.yaml'
+    global_config_file = '/etc/forklift/{}'.format(config_filename)
+    faraday_conf = global_config_file if os.path.isfile(global_config_file) else config_filename
     fab.local("ENV={} FARADAY_SETTINGS_FILE={} celery -A forklift.tasks worker".format(environment, faraday_conf))
 
 
@@ -34,12 +33,9 @@ def dynamo(command='up', *flags, **kws):
 
     """
     running = False
-    environment = os.environ['ENV'] if 'ENV' in os.environ else 'development'
-    with workon(environment):
-        with fab.settings(fab.hide('running'), warn_only=True):
-            status = fab.local('faraday local status', capture=True)
-            if 'local server found running' in status:
-                running = True
+    with fab.settings(fab.hide('stderr'), warn_only=True):
+        result = fab.local('faraday local status', capture=True)
+        running = result.succeeded
     commands = ('up', 'down', 'status')
     if command not in commands:
         fab.abort("Unexpected command, select from: {}".format(', '.join(commands)))

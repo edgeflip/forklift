@@ -1,6 +1,5 @@
 import datetime
 from collections import defaultdict
-from boto.dynamodb import exceptions
 import logging
 from cStringIO import StringIO
 import time
@@ -127,33 +126,28 @@ class DynamoLoader(object):
     def edges_to_key(self, fbids, key_name):
         stringfile = StringIO()
         writer = unicodecsv.writer(stringfile, encoding='utf-8', delimiter="\t")
-        i = 0
         found = 0
-        not_found = 1
         for fbid in fbids:
-            i += 1
-            found = 0
-            not_found = 0
             time.sleep(1)
             logging.info('Seeking edge relationships for fbid {}'.format(fbid))
             result = IncomingEdge.items.query(fbid_target__eq=fbid)
-            if not result:
-                not_found += 1
-            else:
+            if result:
                 found += 1
+
             self.logger.info("found %s edges from fbid %s",
                 len(result),
                 fbid
             )
 
             for edge in result:
-                d = defaultdict(lambda: 0)
+                d = defaultdict(int)
                 d.update(edge)
                 edge = d
                 writer.writerow(
                     [transform_field(edge[field]) for field in EDGE_COLUMNS]
                 )
 
+        self.logger.info("Found edge data for %s out of %s fbids", found, len(fbids))
         stringfile.seek(0)
         write_file_to_key(self.s3_bucket, key_name, stringfile)
 
@@ -176,8 +170,8 @@ class DynamoLoader(object):
                     data['updated'] = datetime.datetime.utcnow()
 
 
-            except exceptions.DynamoDBKeyNotFoundError:
-                data['updated'] = datetime.datetime.now()
+            except User.DoesNotExist:
+                data['updated'] = datetime.datetime.utcnow()
 
             writer.writerow([
                 fbid if field == 'fbid' else transform_field(data[field])
