@@ -3,6 +3,8 @@ from forklift.db.base import redshift_engine
 from forklift.db.utils import get_rowcount
 from forklift.loaders.dynamo import DynamoLoader, USERS_TABLE, EDGES_TABLE
 from forklift.models.dynamo import User, IncomingEdge, Token
+from forklift.testing import ForkliftTestMixin
+import faraday
 from faraday import db
 from mock import patch
 import datetime
@@ -12,12 +14,14 @@ from unittest import TestCase
 logger = logging.getLogger(__name__)
 
 
-class DynamoTestCase(TestCase):
+class DynamoTestCase(ForkliftTestMixin, TestCase):
 
     def setUp(self):
+        super(DynamoTestCase, self).setUp()
         db.build()
 
     def tearDown(self):
+        super(DynamoTestCase, self).tearDown()
         db.destroy()
 
 

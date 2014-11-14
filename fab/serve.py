@@ -1,6 +1,5 @@
 """Fabric tasks for managing servers"""
 from fabric import api as fab
-from . import workon
 import os
 
 @fab.task(name='celery')
@@ -13,7 +12,7 @@ def start_celery():
 
 
 @fab.task
-def dynamo(command='up', *flags, **kws):
+def dynamo(command='up', port=4567, inmemory=False):
     """Manage the dynamo development database server
 
     This task accepts three commands: "up" [default], "status" and "down".
@@ -50,4 +49,9 @@ def dynamo(command='up', *flags, **kws):
         command = 'start'
     elif command == 'down':
         command = 'stop'
-    fab.local("faraday local {}".format(command))
+    base_cmd = "faraday local {cmd} {inmemory} --port={port}".format(
+        cmd=command,
+        inmemory='--memory' if inmemory else '',
+        port=port,
+    )
+    fab.local(base_cmd)

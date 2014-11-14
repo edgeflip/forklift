@@ -65,7 +65,7 @@ def test(path='', env=None, *args, **kws):
     key_args = dict(DEFAULT_KEY_ARGS)
     key_args.update(kws)
 
-    fab.execute(serve.dynamo, 'up')
+    fab.execute(serve.dynamo, command='up', port=4646, inmemory=True)
 
     # Test #
 
@@ -73,4 +73,4 @@ def test(path='', env=None, *args, **kws):
         fab.local('ENV=development FARADAY_SETTINGS_FILE="faraday.yaml" ' + ' '.join(['nosetests'] + flags + [path]))
 
 
-__test__ = False # In case nose gets greedy
+__test__ = False  # In case nose gets greedy
