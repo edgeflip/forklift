@@ -3,7 +3,6 @@ from forklift.db.base import redshift_engine
 from forklift.db.utils import get_rowcount
 from forklift.loaders.dynamo import DynamoLoader, USERS_TABLE, EDGES_TABLE
 from forklift.models.dynamo import User, IncomingEdge, Token
-from forklift.testing import ForkliftTestMixin
 import faraday
 from faraday import db
 from mock import patch
@@ -14,7 +13,23 @@ from unittest import TestCase
 logger = logging.getLogger(__name__)
 
 
-class DynamoTestCase(ForkliftTestMixin, TestCase):
+class DynamoTestCase(TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        global_patches = (
+            patch.multiple(
+                faraday.conf.settings,
+                PREFIX='test',
+                LOCAL_ENDPOINT='localhost:4646',
+            ),
+        )
+        for patch_ in global_patches:
+            patch_.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        patch.stopall()
 
     def setUp(self):
         super(DynamoTestCase, self).setUp()
