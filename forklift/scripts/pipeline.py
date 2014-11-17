@@ -7,6 +7,8 @@ import time
 import uuid
 
 from forklift import tasks
+from forklift.db.base import redshift_engine
+from forklift.loaders.dynamo import DynamoLoader
 from forklift.nlp import tfidf
 from forklift.s3.utils import get_conn_s3
 from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY
@@ -109,6 +111,10 @@ if __name__ == '__main__':
     else:
         hours_back = args.hours_back or HOURS_BACK
         start = end - 3600*hours_back
+
+    logger.info("Syncing dynamo")
+    dynamo_loader = DynamoLoader(logger, redshift_engine.connect())
+    dynamo_loader.sync()
 
     logger.info("Ensuring that the default vectorizer is trained")
 

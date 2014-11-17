@@ -101,6 +101,7 @@ if os.environ['ENV'] in ('staging', 'production'):
     LOGGING['loggers']['grackle'].setdefault('handlers', []).append('sentry')
 logging.config.dictConfig(LOGGING)
 
+
 @setup_logging.connect
 def configure_logging(sender=None, **kwargs):
     logging.config.dictConfig(LOGGING)
