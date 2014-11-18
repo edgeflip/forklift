@@ -27,7 +27,7 @@ RDS_CACHE_URL = "postgresql://{user}:{pass}@{host}:{port}/{db}".format(**rds_cac
 # Celery
 BROKER_URL = 'amqp://{user}:{pass}@{host}:5672/{vhost}'.format(**RABBITMQ)
 CELERY_IMPORTS = ('forklift.tasks', )
-CELERY_RESULT_BACKEND = 'redis://localhost'
+CELERY_RESULT_BACKEND = 'redis://{host}:6379'.format(**REDIS_RESULT_BACKEND)
 CELERYD_PREFETCH_MULTIPLIER = 1
 CELERY_ACCEPT_CONTENT = ['pickle']
 CELERY_MAX_TASKS_PER_CHILD = 5
