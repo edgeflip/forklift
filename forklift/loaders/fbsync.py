@@ -1119,7 +1119,16 @@ class FeedFromS3(object):
                         has_comm = "1"
                         # we're doing bag of words so separating comments
                         # more granularly than this shouldn't matter
-                        comment_text = " ".join(p.commenters[user_id])
+                        tot_len = 0
+                        final_comments = []
+                        for comment in p.commenters[user_id]:
+                            tot_len += len(comment.encode('utf-8')) + 1
+                            if tot_len > DB_TEXT_LEN:
+                                break
+                            else:
+                                final_comments.append(comment)
+                        comment_text = " ".join(final_comments)
+
                         num_comments = str(len(p.commenters[user_id]))
                     else:
                         has_comm = ""
