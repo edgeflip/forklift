@@ -237,6 +237,9 @@ def process(
             old_table_name(aggregate_table),
             delim
         )
+
+    # The reporting dashboard also needs to refer to a subset of the raw tables,
+    # so stick them in the reporting cache
     for cached_table in cached_raw_tables:
         cache_table(
             redshift_engine,
