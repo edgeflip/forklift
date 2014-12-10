@@ -1,7 +1,6 @@
 import datetime
 from mock import patch
 import os
-import re
 from sqlalchemy.orm.session import Session
 
 from forklift.db.base import redshift_engine, rds_cache_engine, rds_source_engine
