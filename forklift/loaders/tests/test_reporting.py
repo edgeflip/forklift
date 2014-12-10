@@ -6,7 +6,7 @@ from sqlalchemy.orm.session import Session
 from forklift.db.base import redshift_engine, rds_cache_engine, rds_source_engine
 from forklift.models.raw import Event, Visit, Visitor, Client, Campaign, CampaignProperty, EdgeflipFbid
 from forklift.models.base import Base
-from forklift.testing import ForkliftTestCase, ForkliftTransactionalTestCase
+from forklift.testing import ForkliftTestCase
 
 import forklift.loaders.reporting as reporting
 
