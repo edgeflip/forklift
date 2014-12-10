@@ -16,7 +16,7 @@ class ForkliftTestCase(TestCase):
         for row in result:
             num_results += 1
             for (fact_key, expected_count) in expected.items():
-                self.assertEqual(row[fact_key], expected_count)
+                self.assertEqual(row[fact_key], expected_count, msg="{}: expected {}, got {}".format(fact_key, expected_count, row[fact_key]))
         self.assertEquals(num_results, 1)
 
 

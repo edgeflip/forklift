@@ -1,5 +1,5 @@
 from .base import Base
-from sqlalchemy import Column, Integer, String, BigInteger, DateTime
+from sqlalchemy import Boolean, Column, Integer, String, BigInteger, DateTime
 
 
 class Visitor(Base):
@@ -42,3 +42,54 @@ class Event(Base):
     updated = Column(DateTime)
     created = Column(DateTime)
 
+
+class Client(Base):
+    __tablename__ = 'clients'
+
+    client_id = Column(Integer, primary_key=True)
+    name = Column(String)
+    fb_app_name = Column(String)
+    fb_app_id = Column(String)
+    domain = Column(String)
+    subdomain = Column(String)
+    create_dt = Column(DateTime)
+    source_parameter = Column(String)
+    codename = Column(String)
+
+
+class Campaign(Base):
+    __tablename__ = 'campaigns'
+
+    campaign_id = Column(Integer, primary_key=True)
+    client_id = Column(Integer)
+    name = Column(String)
+    description = Column(String)
+    is_deleted = Column(Boolean)
+    create_dt = Column(DateTime)
+    delete_dt = Column(DateTime)
+
+
+class CampaignProperty(Base):
+    __tablename__ = 'campaign_properties'
+
+    campaign_property_id = Column(Integer, primary_key=True)
+    campaign_id = Column(Integer)
+    client_faces_url = Column(String)
+    client_thanks_url = Column(String)
+    client_error_url = Column(String)
+    fallback_campaign_id = Column(Integer)
+    fallback_content_id = Column(Integer)
+    fallback_is_cascading = Column(Boolean)
+    min_friends = Column(Integer)
+    start_dt = Column(DateTime)
+    end_dt = Column(DateTime)
+    root_campaign_id = Column(Integer)
+    num_faces = Column(Integer)
+    status = Column(String)
+    content_id = Column(Integer)
+
+
+class EdgeflipFbid(Base):
+    __tablename__ = 'edgeflip_fbids'
+
+    fbid = Column(BigInteger, primary_key=True)
