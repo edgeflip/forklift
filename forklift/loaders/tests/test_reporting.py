@@ -236,7 +236,7 @@ class ReportingAggregatesTestCase(ForkliftTestCase):
 
     def test_clientrollups(self):
         result = self.connection.execute(
-            "select * from {} where client_id = {}" \
+            "select * from {} where client_id = {}"
             .format('clientrollups', 1)
         )
 
@@ -268,7 +268,7 @@ class ReportingAggregatesTestCase(ForkliftTestCase):
 
     def test_campaignrollups(self):
         result = self.connection.execute(
-            "select * from campaignrollups where campaign_id = {}" \
+            "select * from campaignrollups where campaign_id = {}"
             .format(self.campaign_id)
         )
 
@@ -300,7 +300,7 @@ class ReportingAggregatesTestCase(ForkliftTestCase):
 
     def test_campaignhourly(self):
         result = self.connection.execute(
-            "select * from campaignhourly where campaign_id = {} and hour = '{}'" \
+            "select * from campaignhourly where campaign_id = {} and hour = '{}'"
             .format(self.campaign_id, self.hour)
         )
 
