@@ -13,10 +13,12 @@ import forklift.loaders.reporting as reporting
 
 class ReportingTestCase(ForkliftTestCase):
 
-    def setUp(self):
-        super(ReportingTestCase, self).setUp()
+    @classmethod
+    def setUpClass(cls):
+        super(ReportingTestCase, cls).setUpClass()
         timestamp = datetime.datetime(2014,2,1,2,0)
-        self.event = Event(
+        cls.event = Event(
+            event_id=1,
             event_type='stuff',
             visit_id=1,
             created=timestamp,
@@ -24,19 +26,19 @@ class ReportingTestCase(ForkliftTestCase):
             updated=timestamp,
             event_datetime=timestamp,
         )
-        self.connection = redshift_engine.connect()
+        cls.connection = redshift_engine.connect()
         Base.metadata.create_all(redshift_engine)
-        self.session = Session(self.connection)
-        self.session.add(self.event)
-        self.session.commit()
+        cls.session = Session(cls.connection)
+        cls.session.merge(cls.event)
+        cls.session.commit()
 
 
-    def tearDown(self):
-        self.connection.execute('delete from events');
-        self.connection.close()
+    @classmethod
+    def tearDownClass(cls):
+        cls.session.rollback()
 
-    def xtest_refresh_aggregate_table(self):
-        test_query = 'select count(*) as ec from events'
+    def test_refresh_aggregate_table(self):
+        test_query = "select count(*) as ec from events where event_id = 1"
         test_tablename = 'eventcount'
         reporting.refresh_aggregate_table(
             redshift_engine,
@@ -51,11 +53,11 @@ class ReportingTestCase(ForkliftTestCase):
     @patch('forklift.loaders.reporting.copy_to_redshift')
     @patch('forklift.db.utils.unload_to_s3')
     @patch('forklift.db.utils.key_to_local_file')
-    def xtest_process(self, s3_to_fs_mock, rs_to_s3_mock, copy_mock):
+    def test_process(self, s3_to_fs_mock, rs_to_s3_mock, copy_mock):
         delimiter = ','
 
         aggregate_queries = (
-            ('eventcount', 'select count(*) as ec from events'),
+            ('eventcount', "select count(*) as ec from events where event_id = 1"),
         )
 
         raw_tables = {
@@ -91,7 +93,7 @@ class ReportingTestCase(ForkliftTestCase):
             )
         )
 
-class ReportingNewTestCase(ForkliftTransactionalTestCase):
+class ReportingAggregatesTestCase(ForkliftTestCase):
 
     @classmethod
     def visitor_templates(cls):
@@ -107,6 +109,12 @@ class ReportingNewTestCase(ForkliftTransactionalTestCase):
                     {'type': 'faces_page_rendered'},
                 ],
                 'ip': '127.0.0.1',
+            }, {
+                'events': [
+                    {'type': 'initial_redirect'},
+                ],
+                'ip': '127.0.0.2',
+                'other_campaign': True,
             }, {
                 'events': [
                     {'type': 'initial_redirect'},
@@ -161,62 +169,143 @@ class ReportingNewTestCase(ForkliftTransactionalTestCase):
             }],
         }]
 
-    def setUp(self):
-        super(ReportingNewTestCase, self).setUp()
-        self.connection.execute('delete from events')
-        self.connection.execute('delete from visits')
-        self.connection.execute('delete from visitors')
-        self.campaign_id = 6
-        self.hour = datetime.datetime(2014,2,1,2,0)
-        self.in_range = datetime.datetime(2014,2,1,2,30)
-        self.out_of_range = datetime.datetime(2014,2,1,4)
+    @classmethod
+    def setUpClass(cls):
+        super(ReportingAggregatesTestCase, cls).setUpClass()
+        cls.connection = redshift_engine.connect()
+        Base.metadata.create_all(redshift_engine)
+        cls.session = Session(cls.connection)
+        cls.campaign_id = 6
+        cls.other_campaign_id = 7
+        cls.hour = datetime.datetime(2014,2,1,2,0)
+        cls.in_range = datetime.datetime(2014,2,1,2,30)
+        cls.out_of_range = datetime.datetime(2014,2,1,4)
 
-        self.session.merge(Client(client_id=1))
-        self.session.merge(Campaign(campaign_id=self.campaign_id, client_id=1))
-        self.session.merge(CampaignProperty(campaign_id=self.campaign_id, root_campaign_id=self.campaign_id))
-        self.session.merge(EdgeflipFbid(fbid=999))
-        self.session.commit()
+        cls.session.merge(Client(client_id=1))
+        cls.session.merge(Campaign(campaign_id=cls.campaign_id, client_id=1))
+        cls.session.merge(Campaign(campaign_id=cls.other_campaign_id, client_id=1))
+        cls.session.merge(CampaignProperty(
+            campaign_property_id=cls.campaign_id,
+            campaign_id=cls.campaign_id,
+            root_campaign_id=cls.campaign_id,
+        ))
+        cls.session.merge(CampaignProperty(
+            campaign_property_id=cls.other_campaign_id,
+            campaign_id=cls.other_campaign_id,
+            root_campaign_id=cls.other_campaign_id,
+        ))
+        cls.session.merge(EdgeflipFbid(fbid=999))
 
-        for visitor_template in self.visitor_templates():
-            visitor = Visitor(fbid=visitor_template['fbid'], created=self.in_range, updated=self.in_range)
-            self.session.add(visitor)
-            self.session.commit()
+        # explicitly define eventids so even if tearDown doesn't happen, we can
+        # merge instead of adding unnecessary data
+        unique_id = 1
+
+        for visitor_template in cls.visitor_templates():
+            visitor = Visitor(visitor_id=unique_id, fbid=visitor_template['fbid'], created=cls.in_range, updated=cls.in_range)
+            unique_id += 1
+            cls.session.merge(visitor)
             for visit_template in visitor_template['visits']:
-                visit = Visit(ip=visit_template['ip'], visitor_id=visitor.visitor_id, created=self.in_range, updated=self.in_range)
-                self.session.add(visit)
-                self.session.commit()
+                visit = Visit(visit_id=unique_id, ip=visit_template['ip'], visitor_id=visitor.visitor_id, created=cls.in_range, updated=cls.in_range)
+                unique_id += 1
+                cls.session.merge(visit)
                 for event_template in visit_template['events']:
-                    timestamp = self.out_of_range if 'out_of_range' in event_template else self.in_range
+                    timestamp = cls.out_of_range if 'out_of_range' in event_template else cls.in_range
                     friend_fbid = event_template['friend_fbid'] if 'friend_fbid' in event_template else None
+                    campaign_id = cls.other_campaign_id if 'other_campaign' in visit_template else cls.campaign_id
                     event = Event(
+                        event_id=unique_id,
                         event_type=event_template['type'],
                         visit_id=visit.visit_id,
                         created=timestamp,
-                        campaign_id=self.campaign_id,
+                        campaign_id=campaign_id,
                         updated=timestamp,
                         event_datetime=timestamp,
                         friend_fbid=friend_fbid,
                     )
-                    self.session.add(event)
-                    self.session.commit()
+                    unique_id += 1
+                    cls.session.merge(event)
 
-    def tearDown(self):
-        self.connection.execute('delete from events')
-        self.connection.execute('delete from visits')
-        self.connection.execute('delete from visitors')
-        self.connection.close()
-
-    def test_aggregate_queries(self):
+        cls.session.commit()
         for (aggregate_table, aggregate_query) in reporting.AGGREGATE_QUERIES:
             reporting.refresh_aggregate_table(
-                self.connection,
+                cls.connection,
                 aggregate_table,
                 aggregate_query
             )
 
-        result = self.connection.execute("""
-            select * from {} where campaign_id = {} and hour = '{}'
-        """.format('campaignhourly', self.campaign_id, self.hour))
+    @classmethod
+    def tearDownClass(cls):
+        cls.session.rollback()
+
+    def test_clientrollups(self):
+        result = self.connection.execute(
+            "select * from {} where client_id = {}" \
+            .format('clientrollups', 1)
+        )
+
+        expected = {
+            'audience': 2,
+            'auth_fails': 0,
+            'authorized_visits': 4,
+            'clickbacks': 1,
+            'clicks': 0,
+            'distinct_faces_shown': 5,
+            'failed_visits': 2,
+            'initial_redirects': 6,
+            'total_faces_shown': 6,
+            'total_shares': 2,
+            'uniq_users_authorized': 3,
+            'users_facepage_rendered': 3,
+            'users_generated_faces': 3,
+            'users_shown_faces': 3,
+            'users_who_shared': 1,
+            'visits': 4,
+            'visits_facepage_rendered': 4,
+            'visits_generated_faces': 4,
+            'visits_shown_faces': 4,
+            'visits_with_share_clicks': 2,
+            'visits_with_shares': 1,
+        }
+
+        self.assertSingleResult(expected, result)
+
+    def test_campaignrollups(self):
+        result = self.connection.execute(
+            "select * from campaignrollups where campaign_id = {}" \
+            .format(self.campaign_id)
+        )
+
+        expected = {
+            'audience': 2,
+            'auth_fails': 0,
+            'authorized_visits': 4,
+            'clickbacks': 1,
+            'clicks': 0,
+            'distinct_faces_shown': 5,
+            'failed_visits': 1,
+            'initial_redirects': 5,
+            'total_faces_shown': 6,
+            'total_shares': 2,
+            'uniq_users_authorized': 3,
+            'users_facepage_rendered': 3,
+            'users_generated_faces': 3,
+            'users_shown_faces': 3,
+            'users_who_shared': 1,
+            'visits': 4,
+            'visits_facepage_rendered': 4,
+            'visits_generated_faces': 4,
+            'visits_shown_faces': 4,
+            'visits_with_share_clicks': 2,
+            'visits_with_shares': 1,
+        }
+
+        self.assertSingleResult(expected, result)
+
+    def test_campaignhourly(self):
+        result = self.connection.execute(
+            "select * from campaignhourly where campaign_id = {} and hour = '{}'" \
+            .format(self.campaign_id, self.hour)
+        )
 
         expected = {
             'audience': 2,
