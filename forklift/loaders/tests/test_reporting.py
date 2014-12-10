@@ -12,11 +12,10 @@ import forklift.loaders.reporting as reporting
 
 class ReportingTestCase(ForkliftTestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        super(ReportingTestCase, cls).setUpClass()
+    def setUp(self):
+        super(ReportingTestCase, self).setUp()
         timestamp = datetime.datetime(2014,2,1,2,0)
-        cls.event = Event(
+        self.event = Event(
             event_id=1,
             event_type='stuff',
             visit_id=1,
@@ -25,16 +24,15 @@ class ReportingTestCase(ForkliftTestCase):
             updated=timestamp,
             event_datetime=timestamp,
         )
-        cls.connection = redshift_engine.connect()
+        self.connection = redshift_engine.connect()
         Base.metadata.create_all(redshift_engine)
-        cls.session = Session(cls.connection)
-        cls.session.merge(cls.event)
-        cls.session.commit()
+        self.session = Session(self.connection)
+        self.session.merge(self.event)
+        self.session.commit()
 
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.session.rollback()
+    def tearDown(self):
+        self.session.rollback()
 
     def test_refresh_aggregate_table(self):
         test_query = "select count(*) as ec from events where event_id = 1"
