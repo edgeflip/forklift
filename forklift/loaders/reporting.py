@@ -170,7 +170,7 @@ RAW_TABLES = {
     'user_clients': 'user_client_id',
 }
 
-CACHED_RAW_TABLES = set(['clients', 'campaigns'])
+CACHED_RAW_TABLES = {'clients', 'campaigns'}
 
 def refresh_aggregate_table(engine, table_name, query):
     with engine.connect() as connection:
