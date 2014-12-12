@@ -138,7 +138,7 @@ def training_feeds(in_bucket_name, training_set_size):
         retries = 0
         while retries < max_retries:
             try:
-                feed = FeedFromS3(key)
+                feed = FeedFromS3(key, logger)
                 yield feed.post_corpus
                 break
             except KeyError:

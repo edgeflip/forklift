@@ -6,9 +6,9 @@ import os
 def start_celery():
     config_filename = 'faraday.yaml'
     environment = os.environ['ENV'] if 'ENV' in os.environ else 'development'
-    global_config_file = '/etc/forklift/{}'.format(config_filename)
+    global_config_file = '/etc/forklift/conf.d/{}'.format(config_filename)
     faraday_conf = global_config_file if os.path.isfile(global_config_file) else config_filename
-    fab.local("ENV={} FARADAY_SETTINGS_FILE={} celery -A forklift.tasks worker".format(environment, faraday_conf))
+    fab.local("ENV={} TZ='America/Chicago' FARADAY_SETTINGS_FILE={} celery -A forklift.tasks worker".format(environment, faraday_conf))
 
 
 @fab.task

@@ -97,13 +97,14 @@ class DynamoLoader(object):
 
         return fbids
 
-    def get_secondaries(self):
+    def get_secondaries(self, active_fbids):
         # distinct source edges missing from users
         result = self.redshift_connection.execute("""
-            SELECT DISTINCT(e.fbid_source) AS fbid FROM {} u
+            SELECT distinct(e.fbid_source) AS fbid FROM {} u
         RIGHT JOIN {} e ON u.fbid=e.fbid_source
-        WHERE u.fname IS NULL or u.fname = ''
-        """.format(USERS_TABLE, EDGES_TABLE))
+        WHERE (u.fname IS NULL or u.fname = '')
+        AND e.fbid_target in ({})
+        """.format(USERS_TABLE, EDGES_TABLE, ','.join(str(fbid) for fbid in active_fbids)))
         fbids = [row['fbid'] for row in result.fetchall()]
         return fbids
 
@@ -226,10 +227,12 @@ class DynamoLoader(object):
                 USERS_TABLE
             )
 
-        fbids = self.get_missing_edges()
-        self.logger.info("found %s users missing edges", len(fbids))
-        if len(fbids) > 0:
-            self.edges_to_key(fbids, edges_key)
+        missing_edges = set(self.get_missing_edges())
+        self.logger.info("found %s users missing edges", len(missing_edges))
+        fbids_to_try = missing_edges & active_fbids
+        self.logger.info("found %s users suitable to seek out edges for", len(fbids_to_try))
+        if len(fbids_to_try) > 0:
+            self.edges_to_key(fbids_to_try, edges_key)
             dbutils.load_from_s3(
                 self.redshift_connection,
                 self.s3_bucket,
@@ -237,7 +240,7 @@ class DynamoLoader(object):
                 EDGES_TABLE
             )
 
-        fbids = self.get_secondaries()
+        fbids = self.get_secondaries(active_fbids)
         self.logger.info("found %s secondaries", len(fbids))
         if len(fbids) > 0:
             self.fbids_to_key(fbids, secondaries_key)

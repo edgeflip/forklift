@@ -27,6 +27,9 @@ class IncomingEdge(Item):
     photos_other = ItemField(data_type=NUMBER)
     mut_friends = ItemField(data_type=NUMBER)
 
+    class Meta(object):
+        table_name = 'edges_incoming'
+
 
 class User(Item):
     fbid = HashKeyField(data_type=NUMBER)

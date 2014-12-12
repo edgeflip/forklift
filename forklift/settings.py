@@ -91,7 +91,7 @@ LOGGING = {
     }
 }
 
-if os.environ['ENV'] in ('staging', 'production'):
+if 'ENV' in os.environ and os.environ['ENV'] in ('staging', 'production'):
     LOGGING['root']['level'] = 'INFO'
     LOGGING['handlers']['sentry'] = {
         'level': 'INFO',
