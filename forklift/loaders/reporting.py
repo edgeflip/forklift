@@ -58,7 +58,7 @@ METRICS = {
     ],
 }
 ALL_METRICS = list(itertools.chain.from_iterable(METRICS.values()))
-METRICS[CAMPAIGN_HOURLY_TABLE] = [(name, "max({})".format(name)) for (name, _) in ALL_METRICS]
+METRICS[CAMPAIGN_HOURLY_TABLE] = [(name, "coalesce(max({}), 0)".format(name)) for (name, _) in ALL_METRICS]
 
 FROM_CLAUSE = """from events
 inner join visits using (visit_id)
