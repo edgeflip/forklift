@@ -76,7 +76,7 @@ class VectorizerTask(app.Task):
         return self._vectorizer
 
 
-@app.task(base=VectorizerTask, bind=True, default_retry_delay=5, max_retries=3)
+@app.task(base=VectorizerTask, bind=True, default_retry_delay=5, max_retries=3, acks_late=True)
 def fbsync_process(self, keys, version, out_bucket_name, unique_id):
     try:
         feed_chunk = FeedChunk(self.vectorizer, logger)

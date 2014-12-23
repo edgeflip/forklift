@@ -457,6 +457,10 @@ class FBSyncLoader(object):
 
         for incremental_table in incremental_tables:
             dbutils.drop_table_if_exists(incremental_table, self.engine)
+            dbutils.drop_table_if_exists(raw_table_name(incremental_table), self.engine)
+
+        for droppable_table in (updated_posts_table, outbound_users_table, inbound_users_table):
+            dbutils.drop_table_if_exists(droppable_table, self.engine)
 
     def merge_in_smaller_batches(
         self,
