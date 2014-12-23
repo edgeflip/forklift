@@ -242,10 +242,8 @@ class ReportingAggregatesTestCase(ForkliftTestCase):
 
         expected = {
             'audience': 2,
-            'auth_fails': 0,
             'authorized_visits': 4,
             'clickbacks': 1,
-            'clicks': 0,
             'distinct_faces_shown': 5,
             'failed_visits': 2,
             'initial_redirects': 6,
@@ -274,10 +272,8 @@ class ReportingAggregatesTestCase(ForkliftTestCase):
 
         expected = {
             'audience': 2,
-            'auth_fails': 0,
             'authorized_visits': 4,
             'clickbacks': 1,
-            'clicks': 0,
             'distinct_faces_shown': 5,
             'failed_visits': 1,
             'initial_redirects': 5,
@@ -306,10 +302,8 @@ class ReportingAggregatesTestCase(ForkliftTestCase):
 
         expected = {
             'audience': 2,
-            'auth_fails': 0,
             'authorized_visits': 4,
             'clickbacks': 1,
-            'clicks': 0,
             'distinct_faces_shown': 4,
             'failed_visits': 1,
             'initial_redirects': 5,

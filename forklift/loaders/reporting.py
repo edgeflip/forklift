@@ -50,8 +50,6 @@ METRICS = {
         ('audience', "COUNT(DISTINCT CASE WHEN type='shared' THEN friend_fbid ELSE NULL END)"),
     ],
     EVENT_AGG_TABLE: [
-        ('clicks', "SUM(CASE WHEN events.type='button_click' THEN 1 ELSE 0 END)"),
-        ('auth_fails', "SUM(CASE WHEN (events.type='auth_fail' or events.type='oauth_declined') THEN 1 ELSE 0 END)"),
         ('total_faces_shown', "SUM(CASE WHEN events.type='shown' THEN 1 ELSE 0 END)"),
         ('total_shares', "SUM(CASE WHEN events.type='shared' THEN 1 ELSE 0 END)"),
         ('clickbacks', "SUM(CASE WHEN events.type='clickback' THEN 1 ELSE 0 END)"),
