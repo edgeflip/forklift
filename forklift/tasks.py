@@ -3,8 +3,8 @@ import celery
 from celery.exceptions import MaxRetriesExceededError
 
 import forklift.loaders.fact.hourly as loaders
-from forklift.db.base import redshift_engine
-from forklift.db.utils import checkout_connection
+from forklift.db.base import cache_engine, redshift_engine
+from forklift.db.utils import cache_table, checkout_connection
 from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, FBSyncLoader
 from forklift.nlp import tfidf
 from forklift.s3.utils import get_conn_s3
@@ -142,3 +142,17 @@ def fbsync_load(totals, out_bucket, version):
         logger.info("Done adding new data from run %s", version)
     except Exception:
         logger.exception("Worker processing run %s caught error", version)
+
+    more_tables_to_sync = (
+        'users',
+        'user_aggregates',
+    )
+    for aggregate_table in more_tables_to_sync:
+        cache_table(
+            redshift_engine,
+            cache_engine,
+            '{}_staging'.format(aggregate_table),
+            aggregate_table,
+            '{}_old'.format(aggregate_table),
+            ','
+        )
