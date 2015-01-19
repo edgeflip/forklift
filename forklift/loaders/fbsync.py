@@ -493,6 +493,7 @@ class FBSyncLoader(object):
                     final_table,
                 )
                 unmerged_row_count = dbutils.get_rowcount(new_table, engine=self.engine)
+            dbutils.drop_table(new_table)
 
     def load(self, bucket_name, common_prefix, version, source_folder, raw_table):
         path = '/'.join((common_prefix, version, source_folder))
