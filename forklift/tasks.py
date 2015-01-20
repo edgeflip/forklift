@@ -3,7 +3,7 @@ import celery
 from celery.exceptions import MaxRetriesExceededError
 
 import forklift.loaders.fact.hourly as loaders
-from forklift.db.base import cache_engine, redshift_engine
+from forklift.db.base import rds_cache_engine, redshift_engine
 from forklift.db.utils import cache_table, checkout_connection
 from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, FBSyncLoader
 from forklift.nlp import tfidf
@@ -150,7 +150,7 @@ def fbsync_load(totals, out_bucket, version):
     for aggregate_table in more_tables_to_sync:
         cache_table(
             redshift_engine,
-            cache_engine,
+            rds_cache_engine,
             '{}_staging'.format(aggregate_table),
             aggregate_table,
             '{}_old'.format(aggregate_table),
