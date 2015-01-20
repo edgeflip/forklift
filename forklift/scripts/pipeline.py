@@ -127,18 +127,20 @@ if __name__ == '__main__':
     logger.info("Trained vectorizer confirmed, building processing run")
 
     version = str(version)
-    group = (
-        tasks.fbsync_process.si(
+    group = []
+    for chunk in batcher(
+        stream_files_between(start, end),
+        BATCH_SIZE
+    ):
+        group.append(tasks.fbsync_process.si(
             chunk,
             version,
             args.out_bucket,
             str(uuid.uuid4()),
-        )
-        for chunk in batcher(
-            stream_files_between(start, end),
-            BATCH_SIZE
-        )
-    )
+        ))
+        time.sleep(30) # throttle this a bit so dynamo maybe won't complain
+
+    logger.info("Successfully built run of {} chunks".format(len(group)))
     logger.info("Pushing run onto fbsync queue")
     chord(group)(tasks.fbsync_load.s(args.out_bucket, version))
     logger.info("Successfully pushed run onto fbsync queue")
