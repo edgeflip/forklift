@@ -1,13 +1,17 @@
 from boto.s3.key import Key
 import celery
 from celery.exceptions import MaxRetriesExceededError
+import datetime
+import uuid
 
 import forklift.loaders.fact.hourly as loaders
 from forklift.db.base import rds_cache_engine, redshift_engine
 from forklift.db.utils import cache_table, checkout_connection
+from forklift import facebook
+from forklift.loaders import neo_fbsync
 from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, FBSyncLoader
 from forklift.nlp import tfidf
-from forklift.s3.utils import get_conn_s3
+from forklift.s3.utils import get_conn_s3, write_string_to_key, key_to_string
 from celery.utils.log import get_task_logger
 
 app = celery.Celery('forklift')
@@ -156,3 +160,77 @@ def fbsync_load(totals, out_bucket, version):
             '{}_old'.format(aggregate_table),
             ','
         )
+
+
+NEO_JSON_BUCKET = 'fbsync_neo_json'
+NEO_CSV_BUCKET ='fbsync_neo_csv'
+
+
+@app.task
+def extract_url(url, asid, endpoint, update_ts=False):
+    token = "implement dynamo get"
+    data = facebook.utils.urlload(url, access_token=token)
+    unique_identifier = uuid.uuid4()
+    bucket_name = NEO_JSON_BUCKET
+    key_name = "{}/{}".format(endpoint, unique_identifier)
+    write_string_to_key(bucket_name, key_name, data)
+
+    db_maxtime = "implement dynamo get"
+    if update_ts:
+        print "implement dynamo update"
+
+    min_datetime = datetime.today()
+    if data.get('data'):
+        for item in data['data']:
+            if item.get('created_time'):
+                created_time = facebook.utils.parse_ts(item.get('created_time'))
+                if created_time < min_datetime:
+                    min_datetime = created_time
+            next_comms = item.get('comments', {}).get('paging', {}).get('next', {})
+            if next_comms:
+                extract_url.delay(next_comms, asid, endpoint)
+
+            next_likes = item.get('likes', {}).get('paging', {}).get('next', {})
+            if next_likes:
+                extract_url.delay(next_likes, asid, endpoint)
+
+        if min_datetime < db_maxtime:
+            next_url = data.get('paging', {}).get('next')
+            if next_url:
+                extract_url.delay(next_url, asid, endpoint)
+
+    transform_page.delay(bucket_name, key_name, endpoint, asid)
+
+
+@app.task
+def transform_page(bucket_name, key_name, data_type, asid):
+    input_data = key_to_string(bucket_name, key_name)
+    TRANSFORM_MAP = {
+        'statuses': neo_fbsync.transform_stream_page,
+        # fill out
+    }
+
+    for table, output_data in TRANSFORM_MAP[data_type](input_data, asid).iteritems():
+        write_string_to_key(NEO_CSV_BUCKET, key_name, output_data)
+        load_file.delay(NEO_CSV_BUCKET, key_name, table)
+
+
+@app.task
+def load_file(bucket_name, key_name, table_name, asid):
+    # implement
+    compute_top_words.delay(asid)
+
+
+@app.task
+def public_page_data(page_id):
+    # retrieve from FB
+    # upsert
+    pass
+
+
+@app.task
+def compute_top_words(asid):
+    # get corpus from redshift
+    # compute
+    # upsert (well, delete and replace really)
+    pass
