@@ -206,11 +206,21 @@ def extract_url(url, asid, endpoint, update_ts=False):
 def transform_page(bucket_name, key_name, data_type, asid):
     input_data = key_to_string(bucket_name, key_name)
     TRANSFORM_MAP = {
-        'statuses': neo_fbsync.transform_stream_page,
-        # fill out
+        'statuses': neo_fbsync.transform_stream,
+        'links': neo_fbsync.transform_stream,
+        'photos': neo_fbsync.transform_stream,
+        'photos/uploaded': neo_fbsync.transform_stream,
+        'videos': neo_fbsync.transform_stream,
+        'videos/uploaded': neo_fbsync.transform_stream,
+        'permissions': neo_fbsync.transform_permissions,
+        '': neo_fbsync.transform_public_profile,
+        'activities': neo_fbsync.transform_activities,
+        'interests': neo_fbsync.transform_interests,
+        'likes': neo_fbsync.transform_likes,
+        'taggable_friends': neo_fbsync.transform_taggable_friends,
     }
 
-    for table, output_data in TRANSFORM_MAP[data_type](input_data, asid).iteritems():
+    for table, output_data in TRANSFORM_MAP[data_type](input_data, asid, data_type).iteritems():
         write_string_to_key(NEO_CSV_BUCKET, key_name, output_data)
         load_file.delay(NEO_CSV_BUCKET, key_name, table)
 
