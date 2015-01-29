@@ -38,16 +38,17 @@ def get_user_endpoint(user_id, endpoint):
     return 'https://graph.facebook.com/v2.2/{}/{}'.format(user_id, endpoint)
 
 
-def transform_stream(input_data, asid, data_type):
+def transform_stream(input_data, entity_id, data_type):
     output_lines = defaultdict(list)
     posts = (FeedPostFromJson(post, data_type) for post in input_data['data'])
     delim = DEFAULT_DELIMITER
 
     for post in posts:
-        output_lines['posts'].append(assemble_post_line(post, asid, delim))
-        output_lines['user_posts'].extend(assemble_user_post_lines(post, asid, delim))
-        output_lines['comments'].extend(assemble_comment_lines(post, asid, delim))
-        output_lines['locales'].extend(assemble_locale_lines(post, asid, delim))
+        output_lines['posts'].append(assemble_post_line(post, entity_id, delim))
+        output_lines['post_likes'].extend(assemble_post_like_lines(post, entity_id, delim))
+        output_lines['post_tags'].extend(assemble_post_tag_lines(post, entity_id, delim))
+        output_lines['comments'].extend(assemble_comment_lines(post, entity_id, delim))
+        output_lines['locales'].extend(assemble_locale_lines(post, entity_id, delim))
 
     return output_lines
 
@@ -129,7 +130,7 @@ def transform_activities(input_data, asid):
     return {'user_activities': transform_pages(input_data, asid)}
 
 
-def transform_likes(input_data, asid):
+def transform_page_likes(input_data, asid):
     return {'user_likes': transform_pages(input_data, asid)}
 
 
@@ -144,11 +145,39 @@ def transform_field(field, delim):
         return str(field)
 
 
+def assemble_post_like_lines(post, post_id, delim):
+    output_lines = []
+    if hasattr(post, 'like_ids'):
+        for user_id in post.like_ids:
+            like_fields = (
+                post.post_id,
+                user_id,
+                post.post_from,
+            )
+            output_lines.append(
+                transform_field(f, delim) for f in like_fields
+            )
+    return output_lines
+
+def assemble_post_tag_lines(post, post_id, delim):
+    output_lines = []
+    if hasattr(post, 'tagged_ids'):
+        for user_id in post.tagged_ids:
+            tag_fields = (
+                post.post_id,
+                user_id,
+                post.post_from,
+            )
+            output_lines.append(
+                transform_field(f, delim) for f in tag_fields
+            )
+    return output_lines
+
 def assemble_user_post_lines(post, asid, delim):
     link_lines = []
     user_ids = None
-    if hasattr(post, 'to_ids'):
-        user_ids = post.to_ids
+    if hasattr(post, 'tagged_ids'):
+        user_ids = post.tagged_ids
     if hasattr(post, 'like_ids'):
         if user_ids:
             user_ids = user_ids.union(post.like_ids)
@@ -162,7 +191,7 @@ def assemble_user_post_lines(post, asid, delim):
             user_ids = commenter_ids
     if user_ids:
         for user_id in user_ids:
-            has_to = "1" if hasattr(post, 'to_ids') and user_id in post.to_ids else ""
+            has_to = "1" if hasattr(post, 'tagged_ids') and user_id in post.tagged_ids else ""
             has_like = "1" if hasattr(post, 'like_ids') and user_id in post.like_ids else ""
             if hasattr(post, 'commenters') and user_id in commenter_ids:
                 has_comm = "1"
@@ -213,7 +242,7 @@ def assemble_locale_lines(post, asid, delim):
     locale_lines = []
     if not hasattr(post, 'locale'):
         return locale_lines
-    for tagged_asid in getattr(post, 'to_ids', []) + [asid]:
+    for tagged_asid in list(getattr(post, 'tagged_ids', [])) + [asid]:
         locale_fields = (
             post.locale['locale_id'],
             post.locale['locale_name'],
@@ -247,7 +276,7 @@ def assemble_post_line(post, asid, delim):
         post.post_message,
         len(getattr(post, 'like_ids', [])),
         len(getattr(post, 'comments', [])),
-        len(getattr(post, 'to_ids', [])),
+        len(getattr(post, 'tagged_ids', [])),
         len(getattr(post, 'commenters', [])),
     )
     return tuple(transform_field(field, delim) for field in post_fields)
@@ -256,7 +285,10 @@ class FeedPostFromJson(object):
 
     def __init__(self, post_json, data_type):
         self.post_id = str(post_json['id'])
-        self.post_ts = facebook.parse_ts(post_json['updated_time']).strftime(FB_DATE_FORMAT)
+        if 'updated_time' in post_json:
+            self.post_ts = facebook.parse_ts(post_json['updated_time']).strftime(FB_DATE_FORMAT)
+        elif 'created_time' in post_json:
+            self.post_ts = facebook.parse_ts(post_json['created_time']).strftime(FB_DATE_FORMAT)
         self.post_type = data_type
         self.post_app = post_json['application']['id'] if 'application' in post_json else ""
         self.post_from = post_json['from']['id'] if 'from' in post_json else ""
@@ -271,9 +303,9 @@ class FeedPostFromJson(object):
         self.post_caption = post_json.get('caption', "")
         self.post_message = post_json.get('message', "")
 
-        if 'to' in post_json and 'data' in post_json['to']:
-            self.to_ids = set()
-            self.to_ids.update([user['id'] for user in post_json['to']['data']])
+        if 'tags' in post_json and 'data' in post_json['tags']:
+            self.tagged_ids = set()
+            self.tagged_ids.update([user['id'] for user in post_json['tags']['data'] if 'id' in user])
         if 'likes' in post_json and 'data' in post_json['likes']:
             self.like_ids = set()
             self.like_ids.update([user['id'] for user in post_json['likes']['data']])

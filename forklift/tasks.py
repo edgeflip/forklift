@@ -1,8 +1,11 @@
+from abc import ABCMeta, abstractproperty, abstractmethod
+
 from boto.s3.key import Key
 import celery
 from celery.exceptions import MaxRetriesExceededError
 import datetime
 import uuid
+from collections import defaultdict
 
 import forklift.loaders.fact.hourly as loaders
 from forklift.db.base import rds_cache_engine, redshift_engine
@@ -167,12 +170,12 @@ NEO_CSV_BUCKET ='fbsync_neo_csv'
 
 
 @app.task
-def extract_url(url, asid, endpoint, update_ts=False):
+def extract_url(url, entity_id, data_type, update_ts=False):
     token = "implement dynamo get"
     data = facebook.utils.urlload(url, access_token=token)
     unique_identifier = uuid.uuid4()
     bucket_name = NEO_JSON_BUCKET
-    key_name = "{}/{}".format(endpoint, unique_identifier)
+    key_name = "{}/{}".format(data_type, unique_identifier)
     write_string_to_key(bucket_name, key_name, data)
 
     db_maxtime = "implement dynamo get"
@@ -188,39 +191,46 @@ def extract_url(url, asid, endpoint, update_ts=False):
                     min_datetime = created_time
             next_comms = item.get('comments', {}).get('paging', {}).get('next', {})
             if next_comms:
-                extract_url.delay(next_comms, asid, endpoint)
+                extract_url.delay(next_comms, item['id'], 'post_comments')
 
             next_likes = item.get('likes', {}).get('paging', {}).get('next', {})
             if next_likes:
-                extract_url.delay(next_likes, asid, endpoint)
+                extract_url.delay(next_likes, item['id'], 'post_likes')
+
+            next_tags = item.get('tags', {}).get('tags', {}).get('next', {})
+            if next_tags:
+                extract_url.delay(next_tags, item['id'], 'post_tags')
 
         if min_datetime < db_maxtime:
             next_url = data.get('paging', {}).get('next')
             if next_url:
-                extract_url.delay(next_url, asid, endpoint)
+                extract_url.delay(next_url, entity_id, data_type)
 
-    transform_page.delay(bucket_name, key_name, endpoint, asid)
+    transform_page.delay(bucket_name, key_name, data_type, entity_id)
 
 
 @app.task
-def transform_page(bucket_name, key_name, data_type, asid):
+def transform_page(bucket_name, key_name, data_type, entity_id):
     input_data = key_to_string(bucket_name, key_name)
     TRANSFORM_MAP = {
         'statuses': neo_fbsync.transform_stream,
         'links': neo_fbsync.transform_stream,
         'photos': neo_fbsync.transform_stream,
-        'photos/uploaded': neo_fbsync.transform_stream,
+        'uploaded_photos': neo_fbsync.transform_stream,
         'videos': neo_fbsync.transform_stream,
-        'videos/uploaded': neo_fbsync.transform_stream,
+        'uploaded_videos': neo_fbsync.transform_stream,
         'permissions': neo_fbsync.transform_permissions,
-        '': neo_fbsync.transform_public_profile,
+        'public_profile': neo_fbsync.transform_public_profile,
         'activities': neo_fbsync.transform_activities,
         'interests': neo_fbsync.transform_interests,
-        'likes': neo_fbsync.transform_likes,
+        'page_likes': neo_fbsync.transform_page_likes,
+        'post_likes': neo_fbsync.transform_post_likes,
+        'post_comments': neo_fbsync.transform_post_comments,
+        'post_tags': neo_fbsync.transform_post_tags,
         'taggable_friends': neo_fbsync.transform_taggable_friends,
     }
 
-    for table, output_data in TRANSFORM_MAP[data_type](input_data, asid, data_type).iteritems():
+    for table, output_data in TRANSFORM_MAP[data_type](input_data, entity_id, data_type).iteritems():
         write_string_to_key(NEO_CSV_BUCKET, key_name, output_data)
         load_file.delay(NEO_CSV_BUCKET, key_name, table)
 
@@ -244,3 +254,54 @@ def compute_top_words(asid):
     # compute
     # upsert (well, delete and replace really)
     pass
+
+
+class FBEntity(object):
+    __metaclass__ = ABCMeta
+
+
+class UserEntity(FBEntity):
+    pass
+
+class PostEntity(FBEntity):
+    pass
+
+class FBEndpoint(object):
+    __metaclass__ = ABCMeta
+
+    @abstractproperty
+    def endpoint(self):
+        pass
+
+    @abstractproperty
+    def transformer(self):
+        pass
+
+    def url(self, entity_id):
+        return 'https://graph.facebook.com/v2.2/{}/{}'.format(
+            entity_id,
+            self.endpoint,
+        )
+
+
+
+class FBTransformer(object):
+    __metaclass__ = ABCMeta
+
+    @abstractproperty
+    def loader(self):
+        pass
+
+    @abstractmethod
+    def run(self, input_data, entity_id, data_type):
+        pass
+
+class StreamTransformer(object):
+
+    def generate_csv(self, input_data, entity_id, data_type):
+        output_lines = defaultdict(list)
+        return output_lines
+
+
+class CSVLoader(object):
+    __
