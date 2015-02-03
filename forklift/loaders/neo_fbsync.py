@@ -8,6 +8,7 @@ from urlparse import urlparse
 LOG = logging.getLogger(__name__)
 DEFAULT_DELIMITER = ","
 FB_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+POSTS_TABLE = 'posts_neo'
 
 def urlload(url, **kwargs):
     """Load data from the given Facebook URL."""
@@ -173,47 +174,6 @@ def assemble_post_tag_lines(post, post_id, delim):
             )
     return output_lines
 
-def assemble_user_post_lines(post, asid, delim):
-    link_lines = []
-    user_ids = None
-    if hasattr(post, 'tagged_ids'):
-        user_ids = post.tagged_ids
-    if hasattr(post, 'like_ids'):
-        if user_ids:
-            user_ids = user_ids.union(post.like_ids)
-        else:
-            user_ids = post.like_ids
-    if hasattr(post, 'commenters'):
-        commenter_ids = post.commenters.keys()
-        if user_ids:
-            user_ids = user_ids.union(commenter_ids)
-        else:
-            user_ids = commenter_ids
-    if user_ids:
-        for user_id in user_ids:
-            has_to = "1" if hasattr(post, 'tagged_ids') and user_id in post.tagged_ids else ""
-            has_like = "1" if hasattr(post, 'like_ids') and user_id in post.like_ids else ""
-            if hasattr(post, 'commenters') and user_id in commenter_ids:
-                has_comm = "1"
-                num_comments = str(len(post.commenters[user_id]))
-            else:
-                has_comm = ""
-                num_comments = "0"
-
-            link_fields = (
-                post.post_id,
-                user_id,
-                asid,
-                has_to,
-                has_like,
-                has_comm,
-                num_comments,
-            )
-            link_lines.append(
-                transform_field(f, delim) for f in link_fields
-            )
-    return link_lines
-
 
 def assemble_comment_lines(post, asid, delim):
     comment_lines = []
@@ -241,8 +201,7 @@ def assemble_comment_lines(post, asid, delim):
 def assemble_locale_lines(post, asid, delim):
     locale_lines = []
     if not hasattr(post, 'locale'):
-        return locale_lines
-    for tagged_asid in list(getattr(post, 'tagged_ids', [])) + [asid]:
+        return localeposts    for tagged_asid in list(getattr(post, 'tagged_ids', [])) + [asid]:
         locale_fields = (
             post.locale['locale_id'],
             post.locale['locale_name'],
@@ -251,6 +210,7 @@ def assemble_locale_lines(post, asid, delim):
             post.locale['locale_zip'],
             post.locale['locale_country'],
             post.locale['locale_address'],
+            post.post_id,
             tagged_asid
         )
         locale_lines.append(
@@ -274,12 +234,13 @@ def assemble_post_line(post, asid, delim):
         post.post_description,
         post.post_caption,
         post.post_message,
-        len(getattr(post, 'like_ids', [])),
-        len(getattr(post, 'comments', [])),
-        len(getattr(post, 'tagged_ids', [])),
-        len(getattr(post, 'commenters', [])),
     )
     return tuple(transform_field(field, delim) for field in post_fields)
+
+
+def datediff_expression():
+    return "datediff('year', birthday, getdate())"
+
 
 class FeedPostFromJson(object):
 

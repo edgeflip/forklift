@@ -364,3 +364,13 @@ def cache_table(redshift_engine, cache_engine, staging_table, final_table, old_t
     )
 
     deploy_table(final_table, staging_table, old_table, cache_engine)
+
+
+def raw_table_name(table_base):
+    return "{}_raw".format(table_base)
+
+
+def old_table_name(table_base):
+    return "{}_old".format(table_base)
+
+
