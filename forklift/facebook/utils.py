@@ -1,19 +1,23 @@
 import datetime
 import logging
 import requests
+from requests.adapters import HTTPAdapter
 import sys
 
 LOG = logging.getLogger(__name__)
 
 
 def urlload(url, **kwargs):
+    logger = kwargs.pop('logger', LOG)
     """Load data from the given Facebook URL."""
-    timeout = kwargs.pop('timeout') or 30
+    timeout = kwargs.pop('timeout', 10)
     try:
-        return requests.get(url, params=kwargs, timeout=timeout).json()
+        s = requests.Session()
+        s.mount('https://graph.facebook.com', HTTPAdapter(max_retries=1))
+        return s.get(url, params=kwargs, timeout=timeout).json()
     except IOError as exc:
         exc_type, exc_value, trace = sys.exc_info()
-        LOG.warning(
+        logger.warning(
             "Error opening URL %s %r", url, getattr(exc, 'reason', ''),
             exc_info=True
         )
@@ -23,7 +27,7 @@ def urlload(url, **kwargs):
             pass
         else:
             if original_msg:
-                LOG.warning("Returned error message was: %s", original_msg)
+                logger.warning("Returned error message was: %s", original_msg)
         raise exc_type, exc_value, trace
 
 

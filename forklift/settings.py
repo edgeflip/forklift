@@ -40,6 +40,9 @@ CELERY_QUEUES = (
     Queue('visit_hourly', routing_key='hourly.visit', queue_arguments=QUEUE_ARGS),
     Queue('misc_hourly', routing_key='hourly.misc', queue_arguments=QUEUE_ARGS),
     Queue('fbsync', routing_key='fbsync', queue_arguments=QUEUE_ARGS),
+    Queue('extract', routing_key='extract', queue_arguments=QUEUE_ARGS),
+    Queue('transform', routing_key='transform', queue_arguments=QUEUE_ARGS),
+    Queue('load', routing_key='load', queue_arguments=QUEUE_ARGS),
 )
 
 CELERY_ROUTES = {
@@ -50,6 +53,9 @@ CELERY_ROUTES = {
     'forklift.tasks.misc_load_hour': {'queue': 'misc_hourly', 'routing_key': 'hourly.misc'},
     'forklift.tasks.fbsync_process': {'queue': 'fbsync', 'routing_key': 'fbsync'},
     'forklift.tasks.fbsync_load': {'queue': 'fbsync', 'routing_key': 'fbsync'},
+    'forklift.tasks.extract_url': {'queue': 'extract', 'routing_key': 'extract'},
+    'forklift.tasks.transform_page': {'queue': 'transform', 'routing_key': 'transform'},
+    'forklift.tasks.load_stuff': {'queue': 'load', 'routing_key': 'load'},
 }
 
 LOGGING = {

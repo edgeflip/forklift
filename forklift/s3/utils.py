@@ -66,7 +66,9 @@ def stream_files_from(bucket_names):
     conn_s3.close()
 
 
-def write_string_to_key(bucket, key_name, string):
+def write_string_to_key(bucket_name, key_name, string):
+    s3_conn = get_conn_s3()
+    bucket = s3_conn.get_bucket(bucket_name)
     key = Key(bucket)
     key.key = key_name
     key.set_contents_from_string(string + "\n")
@@ -84,7 +86,7 @@ def key_to_string(bucket_name, s3_key_name):
     s3_conn = get_conn_s3()
     bucket = s3_conn.get_bucket(bucket_name)
     key = bucket.get_key(s3_key_name)
-    key.get_contents_as_string()
+    return key.get_contents_as_string()
 
 
 def write_file_to_key(bucket_name, key, file_obj):

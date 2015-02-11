@@ -1,23 +1,32 @@
-from abc import ABCMeta, abstractproperty, abstractmethod
-
 from boto.s3.key import Key
+import traceback
 import celery
 from celery.exceptions import MaxRetriesExceededError
-import datetime
+from datetime import datetime
+import sys
+import os
+import unicodecsv
+import re
+import tempfile
 import uuid
-from collections import defaultdict
+import json
 
-from forklift.db.base import rds_cache_engine, redshift_engine
+from forklift.db.base import rds_cache_engine, redshift_engine, RDSCacheSession, RDSSourceSession
 from forklift.db import utils as dbutils
 from forklift import facebook
 from forklift.loaders import neo_fbsync
 from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, FBSyncLoader
+from forklift.models.fbsync import FBSyncPageTask, FBSyncRunList
+from forklift.models.raw import FBToken
 from forklift.nlp import tfidf
-from forklift.s3.utils import get_conn_s3, write_string_to_key, key_to_string
+from forklift.s3.utils import get_conn_s3, write_string_to_key, key_to_string, write_file_to_key
 from celery.utils.log import get_task_logger
+
 
 app = celery.Celery('forklift')
 app.config_from_object('forklift.settings')
+#app.conf.CELERY_ALWAYS_EAGER = True
+#app.conf.CELERY_EAGER_PROPAGATES_EXCEPTIONS = True
 app.autodiscover_tasks(['forklift.tasks'])
 
 logger = get_task_logger(__name__)
@@ -134,74 +143,223 @@ def fbsync_load(totals, out_bucket, version):
         )
 
 
-NEO_JSON_BUCKET = 'fbsync_neo_json'
-NEO_CSV_BUCKET ='fbsync_neo_csv'
+NEO_JSON_BUCKET = 'fbsync-neo-json'
+NEO_CSV_BUCKET ='fbsync-neo-csv'
+
+
+def always_be_crawling(efid, appid, run_id, stop_datetime=datetime.min):
+    for crawl_type, endpoint in neo_fbsync.ENDPOINTS.iteritems():
+        if endpoint.entity_type == neo_fbsync.USER_ENTITY_TYPE:
+            extract_url.delay(
+                neo_fbsync.get_user_endpoint(efid, endpoint.endpoint),
+                run_id,
+                efid,
+                appid,
+                crawl_type,
+                stop_datetime=stop_datetime
+            )
+    return
+
+
+class ExpiredTokenError(IOError):
+    # TODO: what should we really inherit from?
+    pass
+
+
+@app.task(bind=True, default_retry_delay=5, max_retries=5)
+def extract_url(
+    self,
+    url,
+    run_id,
+    efid,
+    appid,
+    crawl_type,
+    post_id=None,
+    from_asid=None,
+    stop_datetime=None
+):
+    try:
+        prod_session = RDSSourceSession()
+        token = prod_session.query(FBToken).get((efid, appid))
+        if token is None or token.expiration < datetime.today():
+            raise ExpiredTokenError("Expired token for {}".format(efid))
+        db_session = RDSCacheSession()
+
+        # update the task log
+        unique_identifier = str(uuid.uuid4())
+        key_name = "{}/{}/{}.json".format(run_id, crawl_type, unique_identifier)
+        task_log, new = dbutils.get_one_or_create(
+            db_session,
+            FBSyncPageTask,
+            efid=efid,
+            crawl_type=crawl_type,
+            url=url,
+        )
+        task_log.last_run_id = run_id
+        task_log.key_name = key_name
+        db_session.commit()
+
+        data = facebook.utils.urlload(url, access_token=token.access_token, logger=logger)
+        bucket_name = NEO_JSON_BUCKET
+
+        min_datetime = datetime.today()
+        if data.get('data'):
+            write_string_to_key(bucket_name, key_name, json.dumps(data))
+            logger.info("Successfully wrote raw data to %s", key_name)
+
+            for item in data['data']:
+                post_from = item.get('from', {}).get('id')
+                if item.get('created_time'):
+                    created_time = facebook.utils.parse_ts(item.get('created_time'))
+                    if created_time < min_datetime:
+                        min_datetime = created_time
+                next_comms = item.get('comments', {}).get('paging', {}).get('next', {})
+                if next_comms:
+                    logger.info("Found comments in need of pagination for post_id %s", item['id'])
+                    extract_url.delay(next_comms, run_id, efid, appid, 'post_comments', post_id=item['id'], from_asid=post_from)
+
+                next_likes = item.get('likes', {}).get('paging', {}).get('next', {})
+                if next_likes:
+                    logger.info("Found likes in need of pagination for post_id %s", item['id'])
+                    extract_url.delay(next_likes, run_id, efid, appid, 'post_likes', post_id=item['id'], from_asid=post_from)
+
+                next_tags = item.get('tags', {}).get('tags', {}).get('next', {})
+                if next_tags:
+                    logger.info("Found tags in need of pagination for post_id %s", item['id'])
+                    extract_url.delay(next_tags, run_id, efid, appid, 'post_tags', post_id=item['id'], from_asid=post_from)
+
+            try:
+                task_log.extracted = datetime.today()
+            except Exception, e:
+                print e
+            task_log.post_id = post_id
+            task_log.post_from = from_asid
+            db_session.commit()
+        else:
+            # no data
+            #print "no data", data
+            task_log.transformed = task_log.extracted = task_log.loaded = datetime.today()
+            task_log.key_name = None
+            db_session.commit()
+            if(
+                data.get('error', {}).get('type', "") == 'OAuthException'
+                and data['error'].get('error_subcode') in [458, 459, 460, 463, 464, 467]
+            ):
+                token.expiration = datetime.today() # TODO: parse the real expiration from the message?
+                prod_session.commit()
+                raise ExpiredTokenError("Expired token for {}, return value = {}".format(efid, data))
+
+        next_url = data.get('paging', {}).get('next')
+        if next_url and stop_datetime and min_datetime > stop_datetime:
+            logger.info("More items are available for efid %d, crawl_type %s", efid, crawl_type)
+            extract_url.delay(next_url, run_id, efid, appid, crawl_type, post_id=post_id, from_asid=from_asid, stop_datetime=stop_datetime)
+        else:
+            try:
+                pages_to_transform = db_session.query(FBSyncPageTask).filter_by(
+                    efid=efid,
+                    crawl_type=crawl_type,
+                    transformed=None,
+                    last_run_id=str(run_id),
+                ).all()
+            except Exception, e:
+                print e
+            if len(pages_to_transform) > 0:
+                logger.info(
+                    "Done with extraction for efid %d, crawl_type %s, run_id %s, kicking off %d transform jobs",
+                    efid,
+                    crawl_type,
+                    run_id,
+                    len(pages_to_transform)
+                )
+            for page in pages_to_transform:
+                try:
+                    transform_page.delay(
+                        bucket_name,
+                        page.key_name,
+                        page.crawl_type,
+                        efid,
+                        appid,
+                        run_id,
+                        page.url,
+                        page.post_id,
+                        page.post_from
+                    )
+                except Exception, e:
+                    print e
+    except ExpiredTokenError, exc:
+        logger.error("Giving up on run_id %s, efid %d, url %s due to \"%s\"", run_id, efid, url, exc)
+    except Exception, exc:
+        logger.error("Retrying run_id %s, efid %d, url %s due to \"%s\"", run_id, efid, url, exc)
+        self.retry(exc=exc)
+
+
+@app.task(bind=True, default_retry_delay=2, max_retries=2)
+def transform_page(self, bucket_name, json_key_name, crawl_type, efid, appid, run_id, url, post_id=None, from_asid=None):
+    try:
+        input_string = key_to_string(bucket_name, json_key_name)
+
+        db_session = RDSCacheSession()
+        task_set = db_session.query(FBSyncPageTask).filter_by(
+            efid=efid,
+            crawl_type=crawl_type,
+            url=url,
+        )
+        task_log = task_set.one()
+        if not task_log:
+            logger.error("Task log not found")
+
+        if input_string:
+            input_data = json.loads(input_string)
+            transformer = neo_fbsync.ENDPOINTS[crawl_type].transformer
+
+            output = transformer(
+                input_data,
+                efid,
+                appid,
+                crawl_type,
+                post_id=post_id,
+                post_from=from_asid
+            )
+            if not output:
+                logger.error("No transformed data found")
+            else:
+                logger.info("Got transformed data")
+
+            for table, output_data in output.iteritems():
+                file_obj = tempfile.NamedTemporaryFile()
+                writer = unicodecsv.writer(file_obj, delimiter=',')
+                for row in output_data:
+                    writer.writerow(row)
+                logger.info("Trying to write {}".format(table))
+                unique_identifier = str(uuid.uuid4())
+                csv_key_name = "{}/{}/{}.csv".format(run_id, table, unique_identifier)
+                file_obj.seek(0, os.SEEK_SET)
+                write_file_to_key(NEO_CSV_BUCKET, csv_key_name, file_obj)
+
+        task_log.transformed = datetime.today()
+        db_session.commit()
+        queryset = rds_cache_engine.execute("""
+            select 1
+            from fbsync_run_lists rl
+            join fbsync_page_tasks pt on (rl.run_id = pt.last_run_id and rl.efid = pt.efid)
+            where rl.run_id = '{}'
+            and (
+                pt.extracted is null or
+                pt.transformed is null
+            )
+        """.format(run_id))
+
+        if not queryset.fetchone():
+            load_stuff.delay(run_id)
+    except Exception, exc:
+        cleaned_url = re.sub("access_token=.*&", "", url)
+        logger.error("Retrying transformation of run_id %s, efid %d, url %s due to \"%s\"", run_id, efid, cleaned_url, traceback.format_exc())
+        self.retry(exc=exc)
 
 
 @app.task
-def extract_url(url, entity_id, data_type, update_ts=False):
-    token = "implement dynamo get"
-    data = facebook.utils.urlload(url, access_token=token)
-    unique_identifier = uuid.uuid4()
-    bucket_name = NEO_JSON_BUCKET
-    key_name = "{}/{}".format(data_type, unique_identifier)
-    write_string_to_key(bucket_name, key_name, data)
-
-    db_maxtime = "implement dynamo get"
-    if update_ts:
-        print "implement dynamo update"
-
-    min_datetime = datetime.today()
-    if data.get('data'):
-        for item in data['data']:
-            if item.get('created_time'):
-                created_time = facebook.utils.parse_ts(item.get('created_time'))
-                if created_time < min_datetime:
-                    min_datetime = created_time
-            next_comms = item.get('comments', {}).get('paging', {}).get('next', {})
-            if next_comms:
-                extract_url.delay(next_comms, item['id'], 'post_comments')
-
-            next_likes = item.get('likes', {}).get('paging', {}).get('next', {})
-            if next_likes:
-                extract_url.delay(next_likes, item['id'], 'post_likes')
-
-            next_tags = item.get('tags', {}).get('tags', {}).get('next', {})
-            if next_tags:
-                extract_url.delay(next_tags, item['id'], 'post_tags')
-
-        if min_datetime < db_maxtime:
-            next_url = data.get('paging', {}).get('next')
-            if next_url:
-                extract_url.delay(next_url, entity_id, data_type)
-
-    transform_page.delay(bucket_name, key_name, data_type, entity_id)
-
-
-@app.task
-def transform_page(bucket_name, key_name, data_type, entity_id):
-    input_data = key_to_string(bucket_name, key_name)
-    TRANSFORM_MAP = {
-        'statuses': neo_fbsync.transform_stream,
-        'links': neo_fbsync.transform_stream,
-        'photos': neo_fbsync.transform_stream,
-        'uploaded_photos': neo_fbsync.transform_stream,
-        'videos': neo_fbsync.transform_stream,
-        'uploaded_videos': neo_fbsync.transform_stream,
-        'permissions': neo_fbsync.transform_permissions,
-        'public_profile': neo_fbsync.transform_public_profile,
-        'activities': neo_fbsync.transform_activities,
-        'interests': neo_fbsync.transform_interests,
-        'page_likes': neo_fbsync.transform_page_likes,
-        'post_likes': neo_fbsync.transform_post_likes,
-        'post_comments': neo_fbsync.transform_post_comments,
-        'post_tags': neo_fbsync.transform_post_tags,
-        'taggable_friends': neo_fbsync.transform_taggable_friends,
-    }
-
-    for table, output_data in TRANSFORM_MAP[data_type](input_data, entity_id, data_type).iteritems():
-        write_string_to_key(NEO_CSV_BUCKET, key_name, output_data)
-        load_file.delay(NEO_CSV_BUCKET, key_name, table)
+def load_stuff(run_id):
+    print "load stuff"
 
 
 @app.task
@@ -498,52 +656,3 @@ def public_page_data(page_id):
     # upsert
     pass
 
-class FBEntity(object):
-    __metaclass__ = ABCMeta
-
-
-class UserEntity(FBEntity):
-    pass
-
-class PostEntity(FBEntity):
-    pass
-
-class FBEndpoint(object):
-    __metaclass__ = ABCMeta
-
-    @abstractproperty
-    def endpoint(self):
-        pass
-
-    @abstractproperty
-    def transformer(self):
-        pass
-
-    def url(self, entity_id):
-        return 'https://graph.facebook.com/v2.2/{}/{}'.format(
-            entity_id,
-            self.endpoint,
-        )
-
-
-
-class FBTransformer(object):
-    __metaclass__ = ABCMeta
-
-    @abstractproperty
-    def loader(self):
-        pass
-
-    @abstractmethod
-    def run(self, input_data, entity_id, data_type):
-        pass
-
-class StreamTransformer(object):
-
-    def generate_csv(self, input_data, entity_id, data_type):
-        output_lines = defaultdict(list)
-        return output_lines
-
-
-class CSVLoader(object):
-    __

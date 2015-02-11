@@ -1,8 +1,7 @@
-import sys
-import requests
 import logging
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 import forklift.facebook.utils as facebook
+from forklift.utils import get_or_create_efid
 from urlparse import urlparse
 
 LOG = logging.getLogger(__name__)
@@ -10,56 +9,36 @@ DEFAULT_DELIMITER = ","
 FB_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 POSTS_TABLE = 'posts_neo'
 
-def urlload(url, **kwargs):
-    """Load data from the given Facebook URL."""
-    timeout = kwargs.pop('timeout', 40)
-    try:
-        return requests.get(url, params=kwargs, timeout=timeout).json()
-    except IOError as exc:
-        exc_type, exc_value, trace = sys.exc_info()
-        LOG.warning(
-            "Error opening URL %s %r", url, getattr(exc, 'reason', ''),
-            exc_info=True
-        )
-        try:
-            original_msg = exc.read()
-        except Exception:
-            pass
-        else:
-            if original_msg:
-                LOG.warning("Returned error message was: %s", original_msg)
-        raise exc_type, exc_value, trace
-
-
-def extract_user_endpoint(endpoint, user_id, token):
-    return urlload(get_user_endpoint(user_id, endpoint), access_token=token)
-
 
 def get_user_endpoint(user_id, endpoint):
     return 'https://graph.facebook.com/v2.2/{}/{}'.format(user_id, endpoint)
 
 
-def transform_stream(input_data, entity_id, data_type):
+def transform_stream(input_data, efid, appid, data_type, post_id, post_from):
     output_lines = defaultdict(list)
-    posts = (FeedPostFromJson(post, data_type) for post in input_data['data'])
+    posts = (FeedPostFromJson(post, data_type, appid) for post in input_data['data'])
     delim = DEFAULT_DELIMITER
 
     for post in posts:
-        output_lines['posts'].append(assemble_post_line(post, entity_id, delim))
-        output_lines['post_likes'].extend(assemble_post_like_lines(post, entity_id, delim))
-        output_lines['post_tags'].extend(assemble_post_tag_lines(post, entity_id, delim))
-        output_lines['comments'].extend(assemble_comment_lines(post, entity_id, delim))
-        output_lines['locales'].extend(assemble_locale_lines(post, entity_id, delim))
+        output_lines['posts'].append(assemble_post_line(post, efid, delim))
+        if hasattr(post, 'likes'):
+            output_lines['post_likes'].extend(assemble_post_like_lines(post.post_id, post.likes, post.post_from, efid, delim))
+        if hasattr(post, 'tagged_ids'):
+            output_lines['post_tags'].extend(assemble_post_tag_lines(post.post_id, post.tagged_ids, post.post_from, efid, delim))
+        if hasattr(post, 'comments'):
+            output_lines['comments'].extend(assemble_comment_lines(post.post_id, post.comments, efid, appid, delim))
+
+        output_lines['locales'].extend(assemble_locale_lines(post, efid, delim))
 
     return output_lines
 
 
-def transform_taggable_friends(input_data, asid):
+def transform_taggable_friends(input_data, efid, appid, crawl_type, post_id, post_from):
     output_lines = defaultdict()
 
     for input_row in input_data['data']:
         friend_fields = (
-            asid,
+            efid,
             input_row['name']
         )
         output_lines['taggable_friends'].append(
@@ -69,12 +48,12 @@ def transform_taggable_friends(input_data, asid):
     return output_lines
 
 
-def transform_permissions(input_data, asid):
+def transform_permissions(input_data, efid, appid, crawl_type, post_id, post_from):
     output_lines = []
 
     for input_row in input_data['data']:
         permission_fields = (
-            asid,
+            efid,
             input_row['permission'],
             input_row['status'],
         )
@@ -85,11 +64,11 @@ def transform_permissions(input_data, asid):
     return { 'permissions': output_lines }
 
 
-def transform_public_profile(input_data, asid):
+def transform_public_profile(input_data, efid, appid, crawl_type, post_id, post_from):
     output_lines = []
 
     profile_fields = (
-        asid,
+        efid,
         input_data.get('email', ''),
         input_data.get('age_range', ''),
         input_data.get('birthday', ''),
@@ -110,12 +89,133 @@ def transform_public_profile(input_data, asid):
     return { 'users': output_lines }
 
 
-def transform_pages(input_data, asid):
+def transform_activities(input_data, efid, appid, crawl_type, post_id, post_from):
+    return {'user_activities': assemble_page_lines(input_data, efid)}
+
+
+def transform_page_likes(input_data, efid, appid, crawl_type, post_id, post_from):
+    return {'user_likes': assemble_page_lines(input_data, efid)}
+
+
+def transform_interests(input_data, efid, appid, crawl_type, post_id, post_from):
+    return {'user_interests': assemble_page_lines(input_data, efid)}
+
+
+def transform_post_comments(input_data, efid, appid, crawl_type, post_id, post_from):
+    comments = (CommentFromJson(comment, appid) for comment in input_data)
+    return {
+        'comments': assemble_comment_lines(post_id, comments, efid, appid, DEFAULT_DELIMITER)
+    }
+
+
+def transform_post_likes(input_data, efid, appid, crawl_type, post_id, post_from):
+    likes = (get_or_create_efid(row['id'], appid) for row in input_data['data'])
+    return {
+        'post_likes': assemble_post_like_lines(post_id, likes, get_or_create_efid(post_from, appid), efid, DEFAULT_DELIMITER)
+    }
+
+def transform_post_tags(input_data, efid, appid, crawl_type, post_id, post_from):
+    tagged_ids = (get_or_create_efid(row['id'], appid) for row in input_data)
+    return {
+        'post_tags': assemble_post_tag_lines(post_id, tagged_ids, get_or_create_efid(post_from, appid), efid, DEFAULT_DELIMITER)
+    }
+
+
+def transform_field(field, delim):
+    if isinstance(field, basestring):
+        return field.replace(delim, " ").replace("\n", " ").replace("\x00", "").encode('utf8', 'ignore')
+    else:
+        return str(field)
+
+
+FBEndpoint = namedtuple('FBEndpoint', ['endpoint', 'transformer', 'entity_type'])
+USER_ENTITY_TYPE = 'user'
+POST_ENTITY_TYPE = 'post'
+
+ENDPOINTS = {
+    'statuses': FBEndpoint(
+        endpoint='statuses',
+        transformer=transform_stream,
+        entity_type=USER_ENTITY_TYPE,
+    ),
+    'links': FBEndpoint(
+        endpoint='links',
+        transformer=transform_stream,
+        entity_type=USER_ENTITY_TYPE,
+    ),
+    'photos': FBEndpoint(
+        endpoint='photos',
+        transformer=transform_stream,
+        entity_type=USER_ENTITY_TYPE,
+    ),
+    'uploaded_photos': FBEndpoint(
+        endpoint='photos/uploaded',
+        transformer=transform_stream,
+        entity_type=USER_ENTITY_TYPE,
+    ),
+    'videos': FBEndpoint(
+        endpoint='videos',
+        transformer=transform_stream,
+        entity_type=USER_ENTITY_TYPE,
+    ),
+    'uploaded_videos': FBEndpoint(
+        endpoint='videos/uploaded',
+        transformer=transform_stream,
+        entity_type=USER_ENTITY_TYPE,
+    ),
+    'permissions': FBEndpoint(
+        endpoint='permissions',
+        transformer=transform_permissions,
+        entity_type=USER_ENTITY_TYPE,
+    ),
+    'public_profile': FBEndpoint(
+        endpoint='',
+        transformer=transform_public_profile,
+        entity_type=USER_ENTITY_TYPE,
+    ),
+    'activities': FBEndpoint(
+        endpoint='activities',
+        transformer=transform_activities,
+        entity_type=USER_ENTITY_TYPE,
+    ),
+    'interests': FBEndpoint(
+        endpoint='interests',
+        transformer=transform_interests,
+        entity_type=USER_ENTITY_TYPE,
+    ),
+    'page_likes': FBEndpoint(
+        endpoint='likes',
+        transformer=transform_page_likes,
+        entity_type=USER_ENTITY_TYPE,
+    ),
+    'taggable_friends': FBEndpoint(
+        endpoint='taggable_friends',
+        transformer=transform_taggable_friends,
+        entity_type=USER_ENTITY_TYPE,
+    ),
+    'post_likes': FBEndpoint(
+        endpoint='likes',
+        transformer=transform_post_likes,
+        entity_type=POST_ENTITY_TYPE,
+    ),
+    'post_comments': FBEndpoint(
+        endpoint='comments',
+        transformer=transform_post_comments,
+        entity_type=POST_ENTITY_TYPE,
+    ),
+    'post_tags': FBEndpoint(
+        endpoint='tags',
+        transformer=transform_post_tags,
+        entity_type=POST_ENTITY_TYPE,
+    ),
+}
+
+def assemble_page_lines(input_data, efid):
     output_lines = []
 
     for input_row in input_data['data']:
         page_fields = (
-            asid,
+            efid,
             input_row['id'],
             input_row['name'],
             input_row['category'],
@@ -127,102 +227,68 @@ def transform_pages(input_data, asid):
     return output_lines
 
 
-def transform_activities(input_data, asid):
-    return {'user_activities': transform_pages(input_data, asid)}
+def assemble_post_like_lines(post_id, like_ids, post_from, efid, delim):
+    return [
+        [transform_field(f, delim) for f in (post_id, user_id, post_from)]
+        for user_id in like_ids
+    ]
+
+def assemble_post_tag_lines(post_id, tagged_ids, post_from, efid, delim):
+    return [
+        [transform_field(f, delim) for f in (post_id, user_id, post_from)]
+        for user_id in tagged_ids
+    ]
 
 
-def transform_page_likes(input_data, asid):
-    return {'user_likes': transform_pages(input_data, asid)}
-
-
-def transform_interests(input_data, asid):
-    return {'user_interests': transform_pages(input_data, asid)}
-
-
-def transform_field(field, delim):
-    if isinstance(field, basestring):
-        return field.replace(delim, " ").replace("\n", " ").replace("\x00", "").encode('utf8', 'ignore')
-    else:
-        return str(field)
-
-
-def assemble_post_like_lines(post, post_id, delim):
-    output_lines = []
-    if hasattr(post, 'like_ids'):
-        for user_id in post.like_ids:
-            like_fields = (
-                post.post_id,
-                user_id,
-                post.post_from,
-            )
-            output_lines.append(
-                transform_field(f, delim) for f in like_fields
-            )
-    return output_lines
-
-def assemble_post_tag_lines(post, post_id, delim):
-    output_lines = []
-    if hasattr(post, 'tagged_ids'):
-        for user_id in post.tagged_ids:
-            tag_fields = (
-                post.post_id,
-                user_id,
-                post.post_from,
-            )
-            output_lines.append(
-                transform_field(f, delim) for f in tag_fields
-            )
-    return output_lines
-
-
-def assemble_comment_lines(post, asid, delim):
+def assemble_comment_lines(post_id, comments, efid, appid, delim):
     comment_lines = []
-    if not hasattr(post, 'comments'):
-        return comment_lines
 
-    for comment in post.comments:
+    for comment_json in comments:
+        comment = CommentFromJson(comment_json, appid)
         comment_fields = (
-            post.post_id,
-            asid,
-            comment['comment_id'],
-            comment['commenter_id'],
-            comment['message'],
-            comment['comment_ts'],
-            comment['like_count'],
-            comment['user_likes'],
+            post_id,
+            efid,
+            comment.comment_id,
+            comment.commenter_id,
+            comment.message,
+            comment.comment_ts,
+            comment.like_count,
+            comment.user_likes,
         )
         comment_lines.append(
-            transform_field(f, delim) for f in comment_fields
+            [transform_field(f, delim) for f in comment_fields]
         )
 
     return comment_lines
 
 
-def assemble_locale_lines(post, asid, delim):
+def assemble_locale_lines(post, efid, delim):
     locale_lines = []
     if not hasattr(post, 'locale'):
-        return localeposts    for tagged_asid in list(getattr(post, 'tagged_ids', [])) + [asid]:
+        return locale_lines
+
+    for tagged_asid in list(getattr(post, 'tagged_ids', [])) + [efid]:
         locale_fields = (
-            post.locale['locale_id'],
-            post.locale['locale_name'],
-            post.locale['locale_city'],
-            post.locale['locale_state'],
-            post.locale['locale_zip'],
-            post.locale['locale_country'],
-            post.locale['locale_address'],
+            post.locale.get('locale_id'),
+            post.locale.get('locale_name'),
+            post.locale.get('locale_city'),
+            post.locale.get('locale_state'),
+            post.locale.get('locale_zip'),
+            post.locale.get('locale_country'),
+            post.locale.get('locale_address'),
             post.post_id,
             tagged_asid
         )
         locale_lines.append(
-            transform_field(f, delim) for f in locale_fields
+            [transform_field(f, delim) for f in locale_fields]
         )
 
     return locale_lines
 
 
-def assemble_post_line(post, asid, delim):
+def assemble_post_line(post, efid, delim):
     post_fields = (
-        asid,
+        efid,
         post.post_id,
         post.post_ts,
         post.post_type,
@@ -235,16 +301,27 @@ def assemble_post_line(post, asid, delim):
         post.post_caption,
         post.post_message,
     )
-    return tuple(transform_field(field, delim) for field in post_fields)
+    return list(transform_field(field, delim) for field in post_fields)
 
 
 def datediff_expression():
     return "datediff('year', birthday, getdate())"
 
 
+
+class CommentFromJson(object):
+    def __init__(self, comment_json, appid):
+        self.comment_id = get_or_create_efid(comment_json.get('id'), appid)
+        self.commenter_id = get_or_create_efid(comment_json.get('from', {}).get('id'), appid)
+        self.message = comment_json.get('message')
+        self.comment_ts = facebook.parse_ts(comment_json.get('created_time')).strftime(FB_DATE_FORMAT)
+        self.like_count = comment_json.get('like_count')
+        self.user_likes = comment_json.get('user_likes')
+
+
 class FeedPostFromJson(object):
 
-    def __init__(self, post_json, data_type):
+    def __init__(self, post_json, data_type, appid):
         self.post_id = str(post_json['id'])
         if 'updated_time' in post_json:
             self.post_ts = facebook.parse_ts(post_json['updated_time']).strftime(FB_DATE_FORMAT)
@@ -271,73 +348,24 @@ class FeedPostFromJson(object):
             self.like_ids = set()
             self.like_ids.update([user['id'] for user in post_json['likes']['data']])
         if 'comments' in post_json and 'data' in post_json['comments']:
-            self.comments = [{
-                'comment_id': comment.get('id'),
-                'commenter_id': comment.get('from', {}).get('id'),
-                'message': comment.get('message'),
-                'comment_ts': facebook.parse_ts(comment.get('created_time')).strftime(FB_DATE_FORMAT),
-                'like_count': comment.get('like_count'),
-                'user_likes': comment.get('user_likes'),
-            } for comment in post_json['comments']['data']]
+            self.comments = post_json['comments']['data']
             self.commenters = defaultdict(list)
             for comment in self.comments:
-                self.commenters[comment['commenter_id']].append(comment['message'])
+                self.commenters[comment.get('commenter_id')].append(comment.get('message'))
         if 'place' in post_json:
             place = post_json['place']
             location = place.get('location', {})
-            self.locale = {
-                'locale_id': place.get('id'),
-                'locale_name': place.get('name'),
-                'locale_city': location.get('city'),
-                'locale_state': location.get('state'),
-                'locale_zip': location.get('zip'),
-                'locale_country': location.get('country'),
-                'locale_address': location.get('street'),
-            }
-
-def permissions(*args):
-    return extract_user_endpoint('permissions', *args)
-
-
-def user(*args):
-    return extract_user_endpoint('', *args)
-
-
-def activities(*args):
-    return extract_user_endpoint('activities', *args)
-
-
-def interests(*args):
-    return extract_user_endpoint('interests', *args)
-
-
-def likes(*args):
-    return extract_user_endpoint('likes', *args)
-
-
-def taggable_friends(*args):
-    return extract_user_endpoint('taggable_friends', *args)
-
-
-def statuses(*args):
-    return extract_user_endpoint('statuses', *args)
-
-
-def links(*args):
-    return extract_user_endpoint('links', *args)
-
-
-def photos(*args):
-    return extract_user_endpoint('photos', *args)
-
-
-def uploaded_photos(*args):
-    return extract_user_endpoint('photos/uploaded', *args)
-
-
-def videos(*args):
-    return extract_user_endpoint('videos', *args)
-
-
-def uploaded_videos(*args):
-    return extract_user_endpoint('videos/uploaded', *args)
+            if isinstance(location, dict):
+                self.locale = {
+                    'locale_id': place.get('id'),
+                    'locale_name': place.get('name'),
+                    'locale_city': location.get('city'),
+                    'locale_state': location.get('state'),
+                    'locale_zip': location.get('zip'),
+                    'locale_country': location.get('country'),
+                    'locale_address': location.get('street'),
+                }
+            else:
+                self.locale = {
+                    'locale_name': location,
+                }

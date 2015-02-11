@@ -3,7 +3,8 @@ from logging import debug, info, warning
 import os
 import psycopg2
 import tempfile
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.exc import ProgrammingError, IntegrityError
+from sqlalchemy.orm.exc import NoResultFound
 from contextlib import contextmanager
 from forklift.s3.utils import key_to_local_file, write_file_to_key
 from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY, rds_source_config, redshift_config
@@ -374,3 +375,15 @@ def old_table_name(table_base):
     return "{}_old".format(table_base)
 
 
+def get_one_or_create(session, model, **kwargs):
+    try:
+        return session.query(model).filter_by(**kwargs).one(), True
+    except NoResultFound:
+        created = model(**kwargs)
+        try:
+            session.add(created)
+            session.commit()
+            return created, False
+        except IntegrityError:
+            session.rollback()
+            return session.query(model).filter_by(**kwargs).one(), True

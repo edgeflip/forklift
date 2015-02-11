@@ -11,3 +11,8 @@ def batcher(generator, batch_size):
             batch = []
     if num_in_batch > 0:
         yield batch
+
+
+def get_or_create_efid(asid, appid):
+    # TODO: implement? web service?
+    return asid
