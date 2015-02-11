@@ -106,6 +106,10 @@ def write_filename_to_key(bucket_name, filename):
     logger.info("Uploaded %s to s3" % filename)
 
 
+def get_bucket(bucket_name):
+    return get_conn_s3().get_bucket(bucket_name)
+
+
 class S3ReservoirSampler(ReservoirSampler):
     def generator(self, bucket_name):
         conn_s3 = get_conn_s3()

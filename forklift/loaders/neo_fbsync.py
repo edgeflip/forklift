@@ -25,10 +25,10 @@ def transform_stream(input_data, efid, appid, data_type, post_id, post_from):
             output_lines['post_likes'].extend(assemble_post_like_lines(post.post_id, post.likes, post.post_from, efid, delim))
         if hasattr(post, 'tagged_ids'):
             output_lines['post_tags'].extend(assemble_post_tag_lines(post.post_id, post.tagged_ids, post.post_from, efid, delim))
-        if hasattr(post, 'comments'):
-            output_lines['comments'].extend(assemble_comment_lines(post.post_id, post.comments, efid, appid, delim))
+        if hasattr(post, 'post_comments'):
+            output_lines['post_comments'].extend(assemble_comment_lines(post.post_id, post.comments, efid, appid, delim))
 
-        output_lines['locales'].extend(assemble_locale_lines(post, efid, delim))
+        output_lines['user_locales'].extend(assemble_locale_lines(post, efid, delim))
 
     return output_lines
 
@@ -61,12 +61,10 @@ def transform_permissions(input_data, efid, appid, crawl_type, post_id, post_fro
             tuple(transform_field(field, DEFAULT_DELIMITER) for field in permission_fields)
         )
 
-    return { 'permissions': output_lines }
+    return { 'requested_permissions': output_lines }
 
 
 def transform_public_profile(input_data, efid, appid, crawl_type, post_id, post_from):
-    output_lines = []
-
     profile_fields = (
         efid,
         input_data.get('email', ''),
@@ -82,11 +80,16 @@ def transform_public_profile(input_data, efid, appid, crawl_type, post_id, post_
         facebook.parse_ts(input_data['updated_time']).strftime(FB_DATE_FORMAT),
     )
 
-    output_lines.append(
-        tuple(transform_field(field, DEFAULT_DELIMITER) for field in profile_fields)
+    output_line = tuple(transform_field(field, DEFAULT_DELIMITER) for field in profile_fields)
+    language_lines = (
+        tuple(transform_field(field, DEFAULT_DELIMITER) for field in (efid, language['name']))
+        for language in input_data.get('languages', [])
     )
 
-    return { 'users': output_lines }
+    return {
+        'users': [output_line],
+        'user_languages': language_lines,
+    }
 
 
 def transform_activities(input_data, efid, appid, crawl_type, post_id, post_from):
@@ -104,7 +107,7 @@ def transform_interests(input_data, efid, appid, crawl_type, post_id, post_from)
 def transform_post_comments(input_data, efid, appid, crawl_type, post_id, post_from):
     comments = (CommentFromJson(comment, appid) for comment in input_data)
     return {
-        'comments': assemble_comment_lines(post_id, comments, efid, appid, DEFAULT_DELIMITER)
+        'post_comments': assemble_comment_lines(post_id, comments, efid, appid, DEFAULT_DELIMITER)
     }
 
 

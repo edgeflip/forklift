@@ -16,10 +16,10 @@ from forklift.db import utils as dbutils
 from forklift import facebook
 from forklift.loaders import neo_fbsync
 from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, FBSyncLoader
-from forklift.models.fbsync import FBSyncPageTask, FBSyncRunList
+from forklift.models.fbsync import FBSyncPageTask, FBSyncRunList, FBSyncRun
 from forklift.models.raw import FBToken
 from forklift.nlp import tfidf
-from forklift.s3.utils import get_conn_s3, write_string_to_key, key_to_string, write_file_to_key
+from forklift.s3.utils import get_conn_s3, write_string_to_key, key_to_string, write_file_to_key, get_bucket
 from celery.utils.log import get_task_logger
 
 
@@ -147,7 +147,8 @@ NEO_JSON_BUCKET = 'fbsync-neo-json'
 NEO_CSV_BUCKET ='fbsync-neo-csv'
 
 
-def always_be_crawling(efid, appid, run_id, stop_datetime=datetime.min):
+def always_be_crawling(efid, appid, run_id, stop_datetime):
+    print "running but stopping at", stop_datetime
     for crawl_type, endpoint in neo_fbsync.ENDPOINTS.iteritems():
         if endpoint.entity_type == neo_fbsync.USER_ENTITY_TYPE:
             extract_url.delay(
@@ -158,7 +159,6 @@ def always_be_crawling(efid, appid, run_id, stop_datetime=datetime.min):
                 crawl_type,
                 stop_datetime=stop_datetime
             )
-    return
 
 
 class ExpiredTokenError(IOError):
@@ -203,11 +203,11 @@ def extract_url(
         bucket_name = NEO_JSON_BUCKET
 
         min_datetime = datetime.today()
-        if data.get('data'):
+        if data.get('data') or crawl_type == 'public_profile':
             write_string_to_key(bucket_name, key_name, json.dumps(data))
             logger.info("Successfully wrote raw data to %s", key_name)
 
-            for item in data['data']:
+            for item in data.get('data', []):
                 post_from = item.get('from', {}).get('id')
                 if item.get('created_time'):
                     created_time = facebook.utils.parse_ts(item.get('created_time'))
@@ -228,16 +228,11 @@ def extract_url(
                     logger.info("Found tags in need of pagination for post_id %s", item['id'])
                     extract_url.delay(next_tags, run_id, efid, appid, 'post_tags', post_id=item['id'], from_asid=post_from)
 
-            try:
-                task_log.extracted = datetime.today()
-            except Exception, e:
-                print e
+            task_log.extracted = datetime.today()
             task_log.post_id = post_id
             task_log.post_from = from_asid
             db_session.commit()
         else:
-            # no data
-            #print "no data", data
             task_log.transformed = task_log.extracted = task_log.loaded = datetime.today()
             task_log.key_name = None
             db_session.commit()
@@ -254,15 +249,12 @@ def extract_url(
             logger.info("More items are available for efid %d, crawl_type %s", efid, crawl_type)
             extract_url.delay(next_url, run_id, efid, appid, crawl_type, post_id=post_id, from_asid=from_asid, stop_datetime=stop_datetime)
         else:
-            try:
-                pages_to_transform = db_session.query(FBSyncPageTask).filter_by(
-                    efid=efid,
-                    crawl_type=crawl_type,
-                    transformed=None,
-                    last_run_id=str(run_id),
-                ).all()
-            except Exception, e:
-                print e
+            pages_to_transform = db_session.query(FBSyncPageTask).filter_by(
+                efid=efid,
+                crawl_type=crawl_type,
+                transformed=None,
+                last_run_id=str(run_id),
+            ).all()
             if len(pages_to_transform) > 0:
                 logger.info(
                     "Done with extraction for efid %d, crawl_type %s, run_id %s, kicking off %d transform jobs",
@@ -272,25 +264,28 @@ def extract_url(
                     len(pages_to_transform)
                 )
             for page in pages_to_transform:
-                try:
-                    transform_page.delay(
-                        bucket_name,
-                        page.key_name,
-                        page.crawl_type,
-                        efid,
-                        appid,
-                        run_id,
-                        page.url,
-                        page.post_id,
-                        page.post_from
-                    )
-                except Exception, e:
-                    print e
+                transform_page.delay(
+                    bucket_name,
+                    page.key_name,
+                    page.crawl_type,
+                    efid,
+                    appid,
+                    run_id,
+                    page.url,
+                    page.post_id,
+                    page.post_from
+                )
     except ExpiredTokenError, exc:
         logger.error("Giving up on run_id %s, efid %d, url %s due to \"%s\"", run_id, efid, url, exc)
     except Exception, exc:
-        logger.error("Retrying run_id %s, efid %d, url %s due to \"%s\"", run_id, efid, url, exc)
-        self.retry(exc=exc)
+        try:
+            logger.error("Retrying extraction of run_id %s, efid %d, url %s due to \"%s\"", run_id, efid, url, exc)
+            self.retry(exc=exc)
+        except MaxRetriesExceededError:
+            logger.error("Too many retries, giving up on run_id %s, efid %d, url %s", run_id, efid, url)
+            task_log.transformed = task_log.extracted = task_log.loaded = datetime.today()
+            task_log.key_name = None
+            db_session.commit()
 
 
 @app.task(bind=True, default_retry_delay=2, max_retries=2)
@@ -338,28 +333,73 @@ def transform_page(self, bucket_name, json_key_name, crawl_type, efid, appid, ru
 
         task_log.transformed = datetime.today()
         db_session.commit()
-        queryset = rds_cache_engine.execute("""
-            select 1
-            from fbsync_run_lists rl
-            join fbsync_page_tasks pt on (rl.run_id = pt.last_run_id and rl.efid = pt.efid)
-            where rl.run_id = '{}'
-            and (
-                pt.extracted is null or
-                pt.transformed is null
-            )
-        """.format(run_id))
+        check_load.delay(run_id)
 
-        if not queryset.fetchone():
-            load_stuff.delay(run_id)
     except Exception, exc:
-        cleaned_url = re.sub("access_token=.*&", "", url)
-        logger.error("Retrying transformation of run_id %s, efid %d, url %s due to \"%s\"", run_id, efid, cleaned_url, traceback.format_exc())
-        self.retry(exc=exc)
+        try:
+            cleaned_url = re.sub("access_token=.*&", "", url)
+            logger.error("Retrying transformation of run_id %s, efid %d, url %s due to \"%s\"", run_id, efid, cleaned_url, traceback.format_exc())
+            self.retry(exc=exc)
+        except MaxRetriesExceededError:
+            logger.error("Too many retries, giving up on run_id %s, efid %d, url %s", run_id, efid, url)
+            task_log.transformed = task_log.loaded = datetime.today()
+            task_log.key_name = None
+            db_session.commit()
 
 
 @app.task
-def load_stuff(run_id):
-    print "load stuff"
+def check_load(run_id):
+    transform_not_done = rds_cache_engine.execute("""
+        select 1
+        from fbsync_run_lists rl
+        join fbsync_page_tasks pt on (rl.run_id = pt.last_run_id and rl.efid = pt.efid)
+        where rl.run_id = '{}'
+        and (
+            pt.extracted is null or
+            pt.transformed is null
+        )
+    """.format(run_id)).fetchone()
+    if transform_not_done:
+        print "transform not done"
+        return
+
+    print "transform done, so let's check load"
+    load_not_started = rds_cache_engine.execute(
+        "update fbsync_runs set load_started = true where run_id = '{}' and load_started = false returning 1".format(run_id)
+    ).fetchone()
+    if load_not_started:
+        print "load not started"
+        load_run.delay(run_id)
+    else:
+        print "load started"
+
+
+def incremental_table_name(table_base, version):
+    return "{}_{}".format(table_base, version)
+
+
+@app.task
+def load_run(run_id):
+    try:
+        bucket_name = NEO_CSV_BUCKET
+        bucket = get_bucket(bucket_name)
+        prefix = "{}/".format(run_id)
+        paths = [t.name for t in bucket.list(prefix=prefix, delimiter='/')]
+        for path in paths:
+            table_name = 'v2_' + path.replace(prefix, '').replace('/', '')
+            inc_table = incremental_table_name(table_name, run_id)
+            with redshift_engine.connect() as connection:
+                with connection.begin():
+                    dbutils.create_new_table(inc_table, table_name, connection)
+                    dbutils.load_from_s3(
+                        connection,
+                        bucket_name,
+                        path,
+                        inc_table,
+                        delim=',',
+                    )
+    except Exception, e:
+        print "died at", e
 
 
 @app.task
@@ -378,6 +418,7 @@ def load_file(bucket_name, key_name, table_name, entity_id, entity_type):
                 bucket_name,
                 key_name,
                 raw_table,
+                delim=',',
             )
     log_rowcount(raw_table, '%s rows loaded into %s')
     if entity_type == 'efid':
