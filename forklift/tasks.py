@@ -378,15 +378,17 @@ def incremental_table_name(table_base, version):
     return "{}_{}".format(table_base, version)
 
 
-@app.task
-def load_run(run_id):
+@app.task(bind=True, default_retry_delay=5, max_retries=5)
+def load_run(self, run_id):
     try:
         bucket_name = NEO_CSV_BUCKET
         bucket = get_bucket(bucket_name)
         prefix = "{}/".format(run_id)
         paths = [t.name for t in bucket.list(prefix=prefix, delimiter='/')]
+        tables = []
         for path in paths:
             table_name = 'v2_' + path.replace(prefix, '').replace('/', '')
+            tables.append(table_name)
             inc_table = incremental_table_name(table_name, run_id)
             with redshift_engine.connect() as connection:
                 with connection.begin():
@@ -398,31 +400,50 @@ def load_run(run_id):
                         inc_table,
                         delim=',',
                     )
-    except Exception, e:
-        print "died at", e
+    except Exception, exc:
+        logger.error("Retrying load of run_id %s due to \"%s\"", run_id, exc)
+        self.retry(exc=exc)
+
+    merge_run.delay(run_id, tables)
 
 
-@app.task
-def load_file(bucket_name, key_name, table_name, entity_id, entity_type):
-    raw_table = dbutils.raw_table_name(table_name)
-    logger.info(
-        'Loading raw data into %s from s3://%s/%s',
-        raw_table,
-        bucket_name,
-        key_name
-    )
-    with redshift_engine.connect() as connection:
-        with connection.begin():
-            dbutils.load_from_s3(
-                connection,
-                bucket_name,
-                key_name,
-                raw_table,
-                delim=',',
-            )
-    log_rowcount(raw_table, '%s rows loaded into %s')
-    if entity_type == 'efid':
-        compute_aggregates.delay(entity_id)
+@app.task(bind=True, default_retry_delay=5, max_retries=5)
+def merge_run(self, run_id, table_names):
+    try:
+        for table_name in table_names:
+            pkey = neo_fbsync.PRIMARY_KEYS[table_name]
+            inc_table = incremental_table_name(table_name, run_id)
+            with redshift_engine.checkout_connection() as connection:
+                with connection.begin():
+                    connection.execute("""
+                        insert into {full_table}
+                        select {inc_table}.* from {inc_table}
+                        left join {full_table} using ({join_conditions})
+                        where {full_table}.{column_name} is null
+                    """.format(
+                        full_table=table_name,
+                        inc_table=inc_table,
+                        join_conditions=",".join(pkey),
+                        column_name=pkey[0],
+                    ))
+    except Exception, exc:
+        logger.error("Retrying merge of run_id %s due to \"%s\"", run_id, exc)
+        self.retry(exc=exc)
+
+    compute_aggregates.delay(run_id)
+    clean_up_incremental_tables.delay(run_id, table_names)
+
+
+@app.task(bind=True, default_retry_delay=5, max_retries=5)
+def clean_up_incremental_tables(self, run_id, table_names):
+    try:
+        for table_name in table_names:
+            inc_table = incremental_table_name(table_name, run_id)
+            with redshift_engine.checkout_connection() as connection:
+                dbutils.drop_table_if_exists(inc_table, connection)
+    except Exception, exc:
+        logger.error("Retrying incremental table cleanup of run_id %s due to \"%s\"", run_id, exc)
+        self.retry(exc=exc)
 
 
 def log_rowcount(table_name, engine=None, custom_msg=None):
@@ -444,7 +465,7 @@ def compute_top_words(efid):
 
 
 @app.task
-def compute_aggregates(efid):
+def compute_aggregates(run_id):
     # post_aggregates - one row per post, dependencies = (posts)
     # user_post_aggregates - one row per post+user combo, dependencies =
     # (post_tags, post_likes, comment, locales)
@@ -454,9 +475,9 @@ def compute_aggregates(efid):
     # poster_aggregates - one row per user, dependencies = user_post_aggregates
     # user_aggregates - one row per user, dependencies =
     # (user_timeline_aggregates, poster_aggregates)
-    compute_top_words.delay(efid)
-    compute_post_aggregates.delay(efid)
-    compute_user_post_aggregates.delay(efid)
+    compute_top_words.delay(run_id)
+    compute_post_aggregates.delay(run_id)
+    compute_user_post_aggregates.delay(run_id)
 
 
 def upsert(efid, final_table, efid_column_name, bound_select_query, engine=None):

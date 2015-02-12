@@ -61,7 +61,7 @@ def transform_permissions(input_data, efid, appid, crawl_type, post_id, post_fro
             tuple(transform_field(field, DEFAULT_DELIMITER) for field in permission_fields)
         )
 
-    return { 'requested_permissions': output_lines }
+    return { 'user_permissions': output_lines }
 
 
 def transform_public_profile(input_data, efid, appid, crawl_type, post_id, post_from):
@@ -117,6 +117,7 @@ def transform_post_likes(input_data, efid, appid, crawl_type, post_id, post_from
         'post_likes': assemble_post_like_lines(post_id, likes, get_or_create_efid(post_from, appid), efid, DEFAULT_DELIMITER)
     }
 
+
 def transform_post_tags(input_data, efid, appid, crawl_type, post_id, post_from):
     tagged_ids = (get_or_create_efid(row['id'], appid) for row in input_data)
     return {
@@ -134,6 +135,21 @@ def transform_field(field, delim):
 FBEndpoint = namedtuple('FBEndpoint', ['endpoint', 'transformer', 'entity_type'])
 USER_ENTITY_TYPE = 'user'
 POST_ENTITY_TYPE = 'post'
+
+PRIMARY_KEYS = {
+    'posts': ('post_id'),
+    'post_likes': ('post_id', 'liked_efid'),
+    'post_comments': ('comment_id'),
+    'post_tags': ('post_id', 'tagged_efid'),
+    'user_interests': ('efid', 'page_id'),
+    'user_likes': ('efid', 'page_id'),
+    'user_activities': ('efid', 'page_id'),
+    'users': ('efid'),
+    'user_permissions': ('efid', 'permission'),
+    'taggable_friends': ('efid'),
+    'user_locales': ('post_id', 'tagged_efid'),
+}
+
 
 ENDPOINTS = {
     'statuses': FBEndpoint(
@@ -272,13 +288,13 @@ def assemble_locale_lines(post, efid, delim):
 
     for tagged_asid in list(getattr(post, 'tagged_ids', [])) + [efid]:
         locale_fields = (
-            post.locale.get('locale_id'),
-            post.locale.get('locale_name'),
-            post.locale.get('locale_city'),
-            post.locale.get('locale_state'),
-            post.locale.get('locale_zip'),
-            post.locale.get('locale_country'),
-            post.locale.get('locale_address'),
+            post.locale.get('locale_id'), '',
+            post.locale.get('locale_name', ''),
+            post.locale.get('locale_city', ''),
+            post.locale.get('locale_state', ''),
+            post.locale.get('locale_zip', ''),
+            post.locale.get('locale_country', ''),
+            post.locale.get('locale_address', ''),
             post.post_id,
             tagged_asid
         )
