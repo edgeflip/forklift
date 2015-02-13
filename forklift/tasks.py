@@ -469,7 +469,7 @@ def log_rowcount(table_name, engine=None, custom_msg=None):
 
 
 @app.task
-def compute_top_words(efid):
+def compute_top_words(run_id):
     # get corpus from redshift
     # compute
     # upsert (well, delete and replace really)
@@ -517,7 +517,7 @@ def upsert(run_id, final_table, efid_column_name, unbound_select_query, bindings
 
 
 @app.task
-def compute_edges(efid):
+def compute_edges(run_id):
     sql = """
         select
             {efid} as efid_primary,
@@ -549,11 +549,10 @@ def compute_edges(efid):
     """
     bindings = {
         'user_posts': neo_fbsync.USER_POSTS_AGGREGATE_TABLE,
-        'efid': efid,
     }
 
     upsert(
-        efid,
+        run_id,
         neo_fbsync.EDGES_TABLE,
         'efid_primary',
         sql,
@@ -594,7 +593,7 @@ def compute_post_aggregates(run_id):
 
 
 @app.task
-def compute_user_post_aggregates(efid_poster):
+def compute_user_post_aggregates(run_id):
     sql = """
         select
             coalesce({tagged}.tagged_efid, {likes}.efid, {comments}.efid_commenter) as efid_user,
@@ -621,11 +620,10 @@ def compute_user_post_aggregates(efid_poster):
         'likes': neo_fbsync.POST_LIKES_TABLE,
         'comments': neo_fbsync.POST_COMMENTS_TABLE,
         'tagged': neo_fbsync.POST_TAGS_TABLE,
-        'efid': efid_poster,
     }
 
     upsert(
-        efid_poster,
+        run_id,
         neo_fbsync.USER_POST_AGGREGATES_TABLE,
         'efid_poster',
         sql,
@@ -641,7 +639,7 @@ def compute_user_post_aggregates(efid_poster):
 
 
 @app.task
-def compute_user_timeline_aggregates(efid):
+def compute_user_timeline_aggregates(run_id):
     sql = """
         select
             efid,
@@ -653,11 +651,10 @@ def compute_user_timeline_aggregates(efid):
     """
     bindings = {
         'posts': neo_fbsync.POSTS_TABLE,
-        'efid': efid,
     }
 
     upsert(
-        efid,
+        run_id,
         neo_fbsync.USER_TIMELINE_AGGREGATES_TABLE,
         'efid',
         sql,
@@ -666,7 +663,7 @@ def compute_user_timeline_aggregates(efid):
 
 
 @app.task
-def compute_poster_aggregates(efid):
+def compute_poster_aggregates(run_id):
     sql = """
         select
             efid_poster,
@@ -684,11 +681,10 @@ def compute_poster_aggregates(efid):
     """
     bindings = {
         'user_posts': neo_fbsync.USER_POST_AGGREGATES_TABLE,
-        'efid': efid,
     }
 
     upsert(
-        efid,
+        run_id,
         neo_fbsync.POSTER_AGGREGATES_TABLE,
         'efid',
         sql,
