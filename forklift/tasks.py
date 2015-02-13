@@ -378,6 +378,10 @@ def incremental_table_name(table_base, version):
     return "{}_{}".format(table_base, version)
 
 
+def affected_efids(run_id):
+    return "affected_efids_{}".format(run_id)
+
+
 @app.task(bind=True, default_retry_delay=5, max_retries=5)
 def load_run(self, run_id):
     try:
@@ -430,8 +434,16 @@ def merge_run(self, run_id, table_names):
         logger.error("Retrying merge of run_id %s due to \"%s\"", run_id, exc)
         self.retry(exc=exc)
 
-    compute_aggregates.delay(run_id)
+    with redshift_engine.checkout_connection() as connection:
+        with connection.begin():
+            connection.execute("""
+                create table {affected_efids} as select efid from {users_inc}
+            """.format(
+                affected_efids=affected_efids(run_id),
+                users_inc=incremental_table_name('users', run_id),
+            ))
     clean_up_incremental_tables.delay(run_id, table_names)
+    compute_aggregates.delay(run_id)
 
 
 @app.task(bind=True, default_retry_delay=5, max_retries=5)
@@ -685,7 +697,7 @@ def compute_poster_aggregates(efid):
 
 
 @app.task
-def compute_user_aggregates(efid):
+def compute_user_aggregates(run_id):
     sql = """select
         *,
         case when num_posts > 0 then (last_activity - first_activity) / num_posts else NULL end as avg_time_between_activity,
@@ -727,12 +739,18 @@ def compute_user_aggregates(efid):
         'datediff_expression': neo_fbsync.datediff_expression(),
     }
     upsert(
-        efid,
+        run_id,
         neo_fbsync.USER_AGGREGATES_TABLE,
         'efid',
         sql,
         bindings
     )
+
+    with redshift_engine.checkout_connection() as connection:
+        dbutils.drop_table_if_exists(
+            affected_efids(run_id),
+            connection
+        )
 
 
 @app.task
@@ -740,4 +758,3 @@ def public_page_data(page_id):
     # retrieve from FB
     # upsert
     pass
-
