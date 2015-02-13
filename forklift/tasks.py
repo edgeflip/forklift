@@ -480,14 +480,21 @@ def compute_aggregates(run_id):
     compute_user_post_aggregates.delay(run_id)
 
 
-def upsert(efid, final_table, efid_column_name, bound_select_query, engine=None):
+def upsert(run_id, final_table, efid_column_name, unbound_select_query, bindings, engine=None):
     engine = engine or redshift_engine
     connection = engine.connect()
     with connection.begin():
+        affected_efid_subquery = "(select efid from {})".format(incremental_table_name('users', run_id))
         connection.execute(
-            "DELETE FROM {table} where {efid_column_name} = {efid}"
+            "DELETE FROM {table} where {efid_column_name} in {subquery}".format(
+                table=final_table,
+                efid_column_name=efid_column_name,
+                subquery=affected_efid_subquery,
+            )
         )
 
+        bindings['affected_efid_subquery'] = affected_efid_subquery
+        bound_select_query = unbound_select_query.format(**bindings)
         connection.execute(
             """INSERT INTO {table}
             {select_query}""".format(
@@ -525,21 +532,25 @@ def compute_edges(efid):
             count(distinct case when post_type = 'link' and user_commented then post_id else null end) as link_comms,
             count(distinct case when user_placed then post_id else null end) as place_tags
         from {user_posts}
+        where {user_posts}.efid_wall in {affected_efid_subquery}
         group by 1, 2
-    """.format(
-        user_posts=neo_fbsync.USER_POSTS_AGGREGATE_TABLE,
-        efid=efid,
-    )
+    """
+    bindings = {
+        'user_posts': neo_fbsync.USER_POSTS_AGGREGATE_TABLE,
+        'efid': efid,
+    }
 
     upsert(
         efid,
         neo_fbsync.EDGES_TABLE,
         'efid_primary',
-        sql
+        sql,
+        bindings
     )
 
+
 @app.task
-def compute_post_aggregates(efid):
+def compute_post_aggregates(run_id):
     sql = """
         select
             posts.post_id,
@@ -552,19 +563,21 @@ def compute_post_aggregates(efid):
             left join {likes} likes on (likes.post_id = posts.post_id)
             left join {comments} comments on (comments.post_id = posts.post_id)
             left join {tagged} tagged on (tagged.post_id = posts.post_id)
-            where posts.efid = {efid}
-    """.format(
-        posts=neo_fbsync.POSTS_TABLE,
-        likes=neo_fbsync.POST_LIKES_TABLE,
-        comments=neo_fbsync.POST_COMMENTS_TABLE,
-        tagged=neo_fbsync.POST_TAGS_TABLE,
-        efid=efid,
-    )
+            where posts.efid in {affected_efid_subquery}
+    """
+    bindings = {
+        'posts': neo_fbsync.POSTS_TABLE,
+        'likes': neo_fbsync.POST_LIKES_TABLE,
+        'comments': neo_fbsync.POST_COMMENTS_TABLE,
+        'tagged': neo_fbsync.POST_TAGS_TABLE,
+        'users_incremental': incremental_table_name('users', run_id)
+    }
     upsert(
-        efid,
+        run_id,
         neo_fbsync.POST_AGGREGATES_TABLE,
         'efid',
-        sql
+        sql,
+        bindings
     )
 
 
@@ -572,10 +585,11 @@ def compute_post_aggregates(efid):
 def compute_user_post_aggregates(efid_poster):
     sql = """
         select
-            {posts}.post_id,
-            {posts}.efid as efid_poster,
-            {posts}.type as post_type,
             coalesce({tagged}.tagged_efid, {likes}.efid, {comments}.efid_commenter) as efid_user,
+            {posts}.post_id,
+            {posts}.efid as efid_wall,
+            {posts}.post_from as efid_poster,
+            {posts}.type as post_type,
             {tagged}.tagged_efid is not null as user_tagged,
             {likes}.efid is not null as user_likes,
             count({comments}.efid_commenter is not null) > 0 as user_commented,
@@ -587,21 +601,23 @@ def compute_user_post_aggregates(efid_poster):
             left join {comments} comments on (comments.post_id = posts.post_id)
             left join {tagged} tagged on (tagged.post_id = posts.post_id)
             left join {locales} locales on (locales.post_id = posts.post_id)
-        where {posts}.efid = {efid}
-        group by 3
-    """.format(
-        posts=neo_fbsync.POSTS_TABLE,
-        likes=neo_fbsync.POST_LIKES_TABLE,
-        comments=neo_fbsync.POST_COMMENTS_TABLE,
-        tagged=neo_fbsync.POST_TAGS_TABLE,
-        efid=efid_poster,
-    )
+        where {posts}.efid in {affected_efid_subquery}
+        group by 1
+    """
+    bindings = {
+        'posts': neo_fbsync.POSTS_TABLE,
+        'likes': neo_fbsync.POST_LIKES_TABLE,
+        'comments': neo_fbsync.POST_COMMENTS_TABLE,
+        'tagged': neo_fbsync.POST_TAGS_TABLE,
+        'efid': efid_poster,
+    }
 
     upsert(
         efid_poster,
         neo_fbsync.USER_POST_AGGREGATES_TABLE,
         'efid_poster',
-        sql
+        sql,
+        bindings
     )
 
     callback = compute_user_aggregates.s(efid_poster)
@@ -621,17 +637,19 @@ def compute_user_timeline_aggregates(efid):
             date(max(ts)) as last_activity,
             count(distinct case when type = 'status' then post_id else null end) as num_stat_upd
         from {posts}
-        where efid = {efid}
-    """.format(
-        posts=neo_fbsync.POSTS_TABLE,
-        efid=efid,
-    )
+        where efid in {affected_efid_subquery}
+    """
+    bindings = {
+        'posts': neo_fbsync.POSTS_TABLE,
+        'efid': efid,
+    }
 
     upsert(
         efid,
         neo_fbsync.USER_TIMELINE_AGGREGATES_TABLE,
         'efid',
-        sql
+        sql,
+        bindings
     )
 
 
@@ -649,18 +667,20 @@ def compute_poster_aggregates(efid):
             count(distinct case when user_tagged then efid_user else null end) as num_friends_i_tagged,
             count(distinct efid_user) as num_friends_interacted_with_my_posts
         from {user_posts}
-        where efid_poster = {efid}
+        where efid_poster in {affected_efid_subquery}
         group by 1
-    """.format(
-        user_posts=neo_fbsync.USER_POST_AGGREGATES_TABLE,
-        efid=efid
-    )
+    """
+    bindings = {
+        'user_posts': neo_fbsync.USER_POST_AGGREGATES_TABLE,
+        'efid': efid,
+    }
 
     upsert(
         efid,
         neo_fbsync.POSTER_AGGREGATES_TABLE,
-        efid,
-        sql
+        'efid',
+        sql,
+        bindings,
     )
 
 
@@ -674,7 +694,7 @@ def compute_user_aggregates(efid):
     from (
         select
             bool_or(user_clients.fbid is not null) as primary,
-            u.fbid,
+            u.efid,
             max({datediff_expression}) as age,
             max(first_activity) as first_activity,
             max(last_activity) as last_activity,
@@ -690,25 +710,28 @@ def compute_user_aggregates(efid):
             max(num_stat_upd) as num_stat_upd,
             max(num_friends_interacted_with_my_posts) as num_friends_interacted_with_my_posts,
             max(num_friends_i_interacted_with) as num_friends_i_interacted_with,
-        join {users} u using (fbid)
-        left join {edges} on (u.fbid = {edges}.fbid_primary)
+        join {users} u using (efid)
+        left join {edges} on (u.efid = {edges}.efid_primary)
         left join {post_aggregates} on (u.efid = {post_aggregates_table}.efid)
         left join {poster_aggregates} me_as_poster on (u.efid = me_as_poster.efid_poster)
         left join user_clients on (u.efid = user_clients.efid)
+        where u.efid in {affected_efid_subquery}
         group by u.fbid
     ) sums
-    """.format(
-        users=neo_fbsync.USERS_TABLE,
-        edges=neo_fbsync.EDGES_TABLE,
-        post_aggregates=neo_fbsync.POST_AGGREGATES_TABLE,
-        poster_aggregates=neo_fbsync.POSTER_AGGREGATES_TABLE,
-        datediff_expression=neo_fbsync.datediff_expression(),
-    )
+    """
+    bindings = {
+        'users': neo_fbsync.USERS_TABLE,
+        'edges': neo_fbsync.EDGES_TABLE,
+        'post_aggregates': neo_fbsync.POST_AGGREGATES_TABLE,
+        'poster_aggregates': neo_fbsync.POSTER_AGGREGATES_TABLE,
+        'datediff_expression': neo_fbsync.datediff_expression(),
+    }
     upsert(
         efid,
         neo_fbsync.USER_AGGREGATES_TABLE,
-        efid,
-        sql
+        'efid',
+        sql,
+        bindings
     )
 
 
