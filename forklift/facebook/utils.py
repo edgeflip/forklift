@@ -37,3 +37,8 @@ def parse_ts(time_string):
     tz_offset_hours = int(time_string[-5:]) / 100  # we're ignoring the possibility of minutes here
     tz_delt = datetime.timedelta(hours=tz_offset_hours)
     return datetime.datetime.strptime(time_string[:-5], "%Y-%m-%dT%H:%M:%S") - tz_delt
+
+def parse_date(date_string):
+    if date_string is None:
+        return ''
+    return datetime.datetime.strptime(date_string, "%m/%d/%Y").date()

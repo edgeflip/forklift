@@ -7,7 +7,24 @@ from urlparse import urlparse
 LOG = logging.getLogger(__name__)
 DEFAULT_DELIMITER = ","
 FB_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-POSTS_TABLE = 'posts_neo'
+POSTS_TABLE = 'v2_posts'
+EDGES_TABLE = 'v2_edges'
+POST_LIKES_TABLE = 'v2_post_likes'
+POST_COMMENTS_TABLE = 'v2_post_comments'
+POST_TAGS_TABLE = 'v2_post_tags'
+POST_AGGREGATES_TABLE = 'v2_post_aggregates'
+USER_POST_AGGREGATES_TABLE = 'v2_user_post_aggregates'
+USER_TIMELINE_AGGREGATES_TABLE = 'v2_user_timeline_aggregates'
+POSTER_AGGREGATES_TABLE = 'v2_poster_aggregates'
+USERS_TABLE = 'v2_users'
+USER_AGGREGATES_TABLE = 'v2_user_aggregates'
+USER_INTERESTS_TABLE = 'v2_user_interests'
+USER_ACTIVITIES_TABLE = 'v2_user_activities'
+USER_LIKES_TABLE = 'v2_user_likes'
+USER_PERMISSIONS_TABLE = 'v2_user_permissions'
+USER_FRIENDS_TABLE = 'v2_user_friends'
+USER_LOCALES_TABLE = 'v2_user_locales'
+USER_LANGUAGES_TABLE = 'v2_user_languages'
 
 
 def get_user_endpoint(user_id, endpoint):
@@ -20,15 +37,15 @@ def transform_stream(input_data, efid, appid, data_type, post_id, post_from):
     delim = DEFAULT_DELIMITER
 
     for post in posts:
-        output_lines['posts'].append(assemble_post_line(post, efid, delim))
-        if hasattr(post, 'likes'):
-            output_lines['post_likes'].extend(assemble_post_like_lines(post.post_id, post.likes, post.post_from, efid, delim))
+        output_lines[POSTS_TABLE].append(assemble_post_line(post, efid, delim))
+        if hasattr(post, 'like_ids'):
+            output_lines[POST_LIKES_TABLE].extend(assemble_post_like_lines(post.post_id, post.likes, post.post_from, efid, delim))
         if hasattr(post, 'tagged_ids'):
-            output_lines['post_tags'].extend(assemble_post_tag_lines(post.post_id, post.tagged_ids, post.post_from, efid, delim))
-        if hasattr(post, 'post_comments'):
-            output_lines['post_comments'].extend(assemble_comment_lines(post.post_id, post.comments, efid, appid, delim))
+            output_lines[POST_TAGS_TABLE].extend(assemble_post_tag_lines(post.post_id, post.tagged_ids, post.post_from, efid, delim))
+        if hasattr(post, 'comments'):
+            output_lines[POST_COMMENTS_TABLE].extend(assemble_comment_lines(post.post_id, post.comments, efid, appid, delim))
 
-        output_lines['user_locales'].extend(assemble_locale_lines(post, efid, delim))
+        output_lines[USER_LOCALES_TABLE].extend(assemble_locale_lines(post, efid, delim))
 
     return output_lines
 
@@ -41,7 +58,7 @@ def transform_taggable_friends(input_data, efid, appid, crawl_type, post_id, pos
             efid,
             input_row['name']
         )
-        output_lines['taggable_friends'].append(
+        output_lines[USER_FRIENDS_TABLE].append(
             tuple(transform_field(field, DEFAULT_DELIMITER) for field in friend_fields)
         )
 
@@ -61,7 +78,7 @@ def transform_permissions(input_data, efid, appid, crawl_type, post_id, post_fro
             tuple(transform_field(field, DEFAULT_DELIMITER) for field in permission_fields)
         )
 
-    return { 'user_permissions': output_lines }
+    return { USER_PERMISSIONS_TABLE: output_lines }
 
 
 def transform_public_profile(input_data, efid, appid, crawl_type, post_id, post_from):
@@ -69,7 +86,7 @@ def transform_public_profile(input_data, efid, appid, crawl_type, post_id, post_
         efid,
         input_data.get('email', ''),
         input_data.get('age_range', ''),
-        input_data.get('birthday', ''),
+        facebook.parse_date(input_data.get('birthday', '')),
         input_data.get('first_name', ''),
         input_data.get('last_name', ''),
         input_data.get('gender', ''),
@@ -87,41 +104,41 @@ def transform_public_profile(input_data, efid, appid, crawl_type, post_id, post_
     )
 
     return {
-        'users': [output_line],
-        'user_languages': language_lines,
+        USERS_TABLE: [output_line],
+        USER_LANGUAGES_TABLE: language_lines,
     }
 
 
 def transform_activities(input_data, efid, appid, crawl_type, post_id, post_from):
-    return {'user_activities': assemble_page_lines(input_data, efid)}
+    return {USER_ACTIVITIES_TABLE: assemble_page_lines(input_data, efid)}
 
 
 def transform_page_likes(input_data, efid, appid, crawl_type, post_id, post_from):
-    return {'user_likes': assemble_page_lines(input_data, efid)}
+    return {USER_LIKES_TABLE: assemble_page_lines(input_data, efid)}
 
 
 def transform_interests(input_data, efid, appid, crawl_type, post_id, post_from):
-    return {'user_interests': assemble_page_lines(input_data, efid)}
+    return {USER_INTERESTS_TABLE: assemble_page_lines(input_data, efid)}
 
 
 def transform_post_comments(input_data, efid, appid, crawl_type, post_id, post_from):
     comments = (CommentFromJson(comment, appid) for comment in input_data)
     return {
-        'post_comments': assemble_comment_lines(post_id, comments, efid, appid, DEFAULT_DELIMITER)
+        POST_COMMENTS_TABLE: assemble_comment_lines(post_id, comments, efid, appid, DEFAULT_DELIMITER)
     }
 
 
 def transform_post_likes(input_data, efid, appid, crawl_type, post_id, post_from):
     likes = (get_or_create_efid(row['id'], appid) for row in input_data['data'])
     return {
-        'post_likes': assemble_post_like_lines(post_id, likes, get_or_create_efid(post_from, appid), efid, DEFAULT_DELIMITER)
+        POST_LIKES_TABLE: assemble_post_like_lines(post_id, likes, get_or_create_efid(post_from, appid), efid, DEFAULT_DELIMITER)
     }
 
 
 def transform_post_tags(input_data, efid, appid, crawl_type, post_id, post_from):
     tagged_ids = (get_or_create_efid(row['id'], appid) for row in input_data)
     return {
-        'post_tags': assemble_post_tag_lines(post_id, tagged_ids, get_or_create_efid(post_from, appid), efid, DEFAULT_DELIMITER)
+        POST_TAGS_TABLE: assemble_post_tag_lines(post_id, tagged_ids, get_or_create_efid(post_from, appid), efid, DEFAULT_DELIMITER)
     }
 
 
@@ -137,17 +154,18 @@ USER_ENTITY_TYPE = 'user'
 POST_ENTITY_TYPE = 'post'
 
 PRIMARY_KEYS = {
-    'posts': ('post_id'),
-    'post_likes': ('post_id', 'liked_efid'),
-    'post_comments': ('comment_id'),
-    'post_tags': ('post_id', 'tagged_efid'),
-    'user_interests': ('efid', 'page_id'),
-    'user_likes': ('efid', 'page_id'),
-    'user_activities': ('efid', 'page_id'),
-    'users': ('efid'),
-    'user_permissions': ('efid', 'permission'),
-    'taggable_friends': ('efid'),
-    'user_locales': ('post_id', 'tagged_efid'),
+    POSTS_TABLE: ('post_id',),
+    POST_LIKES_TABLE: ('post_id', 'liker_efid'),
+    POST_COMMENTS_TABLE: ('comment_id',),
+    POST_TAGS_TABLE: ('post_id', 'tagged_efid'),
+    USER_INTERESTS_TABLE: ('efid', 'page_id'),
+    USER_LIKES_TABLE: ('efid', 'page_id'),
+    USER_ACTIVITIES_TABLE: ('efid', 'page_id'),
+    USER_LANGUAGES_TABLE: ('efid',),
+    USERS_TABLE: ('efid',),
+    USER_PERMISSIONS_TABLE: ('efid', 'permission'),
+    USER_FRIENDS_TABLE: ('efid',),
+    USER_LOCALES_TABLE: ('post_id', 'tagged_efid'),
 }
 
 
@@ -288,7 +306,7 @@ def assemble_locale_lines(post, efid, delim):
 
     for tagged_asid in list(getattr(post, 'tagged_ids', [])) + [efid]:
         locale_fields = (
-            post.locale.get('locale_id'), '',
+            post.locale.get('locale_id', ''),
             post.locale.get('locale_name', ''),
             post.locale.get('locale_city', ''),
             post.locale.get('locale_state', ''),

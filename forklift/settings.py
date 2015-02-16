@@ -44,6 +44,16 @@ CELERY_QUEUES = (
     Queue('transform', routing_key='transform', queue_arguments=QUEUE_ARGS),
     Queue('check_load', routing_key='check_load', queue_arguments=QUEUE_ARGS),
     Queue('load', routing_key='load', queue_arguments=QUEUE_ARGS),
+    Queue('merge', routing_key='merge', queue_arguments=QUEUE_ARGS),
+    Queue('clean_up_incremental_tables', routing_key='clean_up_incremental_tables', queue_arguments=QUEUE_ARGS),
+    Queue('compute_top_words', routing_key='compute_top_words', queue_arguments=QUEUE_ARGS),
+    Queue('compute_aggregates', routing_key='compute_aggregates', queue_arguments=QUEUE_ARGS),
+    Queue('compute_edges', routing_key='compute_edges', queue_arguments=QUEUE_ARGS),
+    Queue('compute_post_aggregates', routing_key='compute_post_aggregates', queue_arguments=QUEUE_ARGS),
+    Queue('compute_user_post_aggregates', routing_key='compute_user_post_aggregates', queue_arguments=QUEUE_ARGS),
+    Queue('compute_user_timeline_aggregates', routing_key='compute_user_timeline_aggregates', queue_arguments=QUEUE_ARGS),
+    Queue('compute_poster_aggregates', routing_key='compute_poster_aggregates', queue_arguments=QUEUE_ARGS),
+    Queue('compute_user_aggregates', routing_key='compute_user_aggregates', queue_arguments=QUEUE_ARGS),
 )
 
 CELERY_ROUTES = {
@@ -58,6 +68,16 @@ CELERY_ROUTES = {
     'forklift.tasks.transform_page': {'queue': 'transform', 'routing_key': 'transform'},
     'forklift.tasks.check_load': {'queue': 'check_load', 'routing_key': 'check_load'},
     'forklift.tasks.load_run': {'queue': 'load', 'routing_key': 'load'},
+    'forklift.tasks.merge_run': {'queue': 'merge', 'routing_key': 'merge'},
+    'forklift.tasks.clean_up_incremental_tables': {'queue': 'clean_up_incremental_tables', 'routing_key': 'clean_up_incremental_tables'},
+    'forklift.tasks.compute_top_words': {'queue': 'compute_top_words', 'routing_key': 'compute_top_words'},
+    'forklift.tasks.compute_aggregates': {'queue': 'compute_aggregates', 'routing_key': 'compute_aggregates'},
+    'forklift.tasks.compute_edges': {'queue': 'compute_edges', 'routing_key': 'compute_edges'},
+    'forklift.tasks.compute_post_aggregates': {'queue': 'compute_post_aggregates', 'routing_key': 'compute_post_aggregates'},
+    'forklift.tasks.compute_user_post_aggregates': {'queue': 'compute_user_post_aggregates', 'routing_key': 'compute_user_post_aggregates'},
+    'forklift.tasks.compute_user_timeline_aggregates': {'queue': 'compute_user_timeline_aggregates', 'routing_key': 'compute_user_timeline_aggregates'},
+    'forklift.tasks.compute_poster_aggregates': {'queue': 'compute_poster_aggregates', 'routing_key': 'compute_poster_aggregates'},
+    'forklift.tasks.compute_user_aggregates': {'queue': 'compute_user_aggregates', 'routing_key': 'compute_user_aggregates'},
 }
 
 LOGGING = {
