@@ -1,5 +1,7 @@
 import logging
 from collections import defaultdict, namedtuple
+from forklift.db import utils as dbutils
+from forklift.db.base import redshift_engine
 import forklift.facebook.utils as facebook
 from forklift.utils import get_or_create_efid
 from urlparse import urlparse
@@ -39,7 +41,7 @@ def transform_stream(input_data, efid, appid, data_type, post_id, post_from):
     for post in posts:
         output_lines[POSTS_TABLE].append(assemble_post_line(post, efid, delim))
         if hasattr(post, 'like_ids'):
-            output_lines[POST_LIKES_TABLE].extend(assemble_post_like_lines(post.post_id, post.likes, post.post_from, efid, delim))
+            output_lines[POST_LIKES_TABLE].extend(assemble_post_like_lines(post.post_id, post.like_ids, post.post_from, efid, delim))
         if hasattr(post, 'tagged_ids'):
             output_lines[POST_TAGS_TABLE].extend(assemble_post_tag_lines(post.post_id, post.tagged_ids, post.post_from, efid, delim))
         if hasattr(post, 'comments'):
@@ -406,3 +408,47 @@ class FeedPostFromJson(object):
                 self.locale = {
                     'locale_name': location,
                 }
+
+
+def incremental_table_name(table_base, version):
+    return "{}_{}".format(table_base, version)
+
+
+def affected_efids(run_id):
+    return "affected_efids_{}".format(run_id)
+
+
+def log_rowcount(table_name, connection, logger=None, custom_msg=None):
+    logger = logger or LOG
+    msg = custom_msg or '%s records found in %s'
+    logger.info(
+        msg,
+        dbutils.get_rowcount(table_name, connection=connection),
+        table_name
+    )
+
+
+def upsert(run_id, final_table, efid_column_name, unbound_select_query, bindings, logger=None, engine=None):
+    engine = engine or redshift_engine
+    connection = engine.connect()
+    log_rowcount(final_table, custom_msg="%s records found in %s before upsert", connection=connection, logger=logger)
+    with connection.begin():
+        affected_efid_subquery = "(select efid from {})".format(affected_efids(run_id))
+        connection.execute(
+            "DELETE FROM {table} where {efid_column_name} in {subquery}".format(
+                table=final_table,
+                efid_column_name=efid_column_name,
+                subquery=affected_efid_subquery,
+            )
+        )
+        log_rowcount(final_table, custom_msg="%s records found in %s after delete", connection=connection, logger=logger)
+        bindings['affected_efid_subquery'] = affected_efid_subquery
+        bound_select_query = unbound_select_query.format(**bindings)
+        connection.execute(
+            """INSERT INTO {table}
+            {select_query}""".format(
+                table=final_table,
+                select_query=bound_select_query,
+            )
+        )
+        log_rowcount(final_table, custom_msg="%s records found in %s after upsert", connection=connection, logger=logger)

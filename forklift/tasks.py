@@ -3,7 +3,6 @@ import traceback
 import celery
 from celery.exceptions import MaxRetriesExceededError
 from datetime import datetime
-import sys
 import os
 import unicodecsv
 import re
@@ -16,7 +15,7 @@ from forklift.db import utils as dbutils
 from forklift import facebook
 from forklift.loaders import neo_fbsync
 from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, FBSyncLoader
-from forklift.models.fbsync import FBSyncPageTask, FBSyncRunList, FBSyncRun
+from forklift.models.fbsync import FBSyncPageTask
 from forklift.models.raw import FBToken
 from forklift.nlp import tfidf
 from forklift.s3.utils import get_conn_s3, write_string_to_key, key_to_string, write_file_to_key, get_bucket
@@ -25,11 +24,10 @@ from celery.utils.log import get_task_logger
 
 app = celery.Celery('forklift')
 app.config_from_object('forklift.settings')
-#app.conf.CELERY_ALWAYS_EAGER = True
-#app.conf.CELERY_EAGER_PROPAGATES_EXCEPTIONS = True
 app.autodiscover_tasks(['forklift.tasks'])
 
 logger = get_task_logger(__name__)
+logger.propagate = False
 
 
 def key_name(version, prefix, unique_id):
@@ -144,21 +142,7 @@ def fbsync_load(totals, out_bucket, version):
 
 
 NEO_JSON_BUCKET = 'fbsync-neo-json'
-NEO_CSV_BUCKET ='fbsync-neo-csv'
-
-
-def always_be_crawling(efid, appid, run_id, stop_datetime):
-    print "running but stopping at", stop_datetime
-    for crawl_type, endpoint in neo_fbsync.ENDPOINTS.iteritems():
-        if endpoint.entity_type == neo_fbsync.USER_ENTITY_TYPE:
-            extract_url.delay(
-                neo_fbsync.get_user_endpoint(efid, endpoint.endpoint),
-                run_id,
-                efid,
-                appid,
-                crawl_type,
-                stop_datetime=stop_datetime
-            )
+NEO_CSV_BUCKET = 'fbsync-neo-csv'
 
 
 class ExpiredTokenError(IOError):
@@ -176,7 +160,7 @@ def extract_url(
     crawl_type,
     post_id=None,
     from_asid=None,
-    stop_datetime=None
+    stop_datetime=None,
 ):
     try:
         prod_session = RDSSourceSession()
@@ -316,18 +300,16 @@ def transform_page(self, bucket_name, json_key_name, crawl_type, efid, appid, ru
                 post_from=from_asid
             )
             if not output:
-                logger.error("No transformed data found")
-            else:
-                logger.info("Got transformed data")
+                logger.error("No transformed data produced")
 
             for table, output_data in output.iteritems():
                 file_obj = tempfile.NamedTemporaryFile()
                 writer = unicodecsv.writer(file_obj, delimiter=',')
                 for row in output_data:
                     writer.writerow(row)
-                logger.info("Trying to write {}".format(table))
                 unique_identifier = str(uuid.uuid4())
                 csv_key_name = "{}/{}/{}.csv".format(run_id, table, unique_identifier)
+                logger.info("Writing to {}".format(csv_key_name))
                 file_obj.seek(0, os.SEEK_SET)
                 write_file_to_key(NEO_CSV_BUCKET, csv_key_name, file_obj)
 
@@ -360,51 +342,37 @@ def check_load(run_id):
         )
     """.format(run_id)).fetchone()
     if transform_not_done:
-        print "transform not done"
+        logger.info("Transform phase for run_id %s not done yet", run_id)
         return
 
-    print "transform done, so let's check load"
     load_not_started = rds_cache_engine.execute(
         "update fbsync_runs set load_started = true where run_id = '{}' and load_started = false returning 1".format(run_id)
     ).fetchone()
 
     if load_not_started:
-        print "load not started"
+        logger.info("Kicking off load for run_id %s", run_id)
         load_run.delay(run_id)
-        print "sent task"
     else:
-        print "load started"
-
-
-def incremental_table_name(table_base, version):
-    return "{}_{}".format(table_base, version)
-
-
-def affected_efids(run_id):
-    return "affected_efids_{}".format(run_id)
+        logger.info("Load already started for run_id %s, skipping", run_id)
 
 
 @app.task(bind=True, default_retry_delay=5, max_retries=5)
 def load_run(self, run_id):
-    print "loading run", run_id
     try:
         bucket_name = NEO_CSV_BUCKET
         bucket = get_bucket(bucket_name)
         prefix = "{}/".format(run_id)
-        print "prefix =", prefix
         paths = [t.name for t in bucket.list(prefix=prefix, delimiter='/')]
+        logger.info("%d loadable paths found for run_id %s", len(paths), run_id)
         tables = []
         for path in paths:
-            print "trying path", path
             table_name = path.replace(prefix, '').replace('/', '')
+            logger.info("Loading table %s", table_name)
             tables.append(table_name)
-            inc_table = incremental_table_name(table_name, run_id)
-            print "incremental table =", inc_table
+            inc_table = neo_fbsync.incremental_table_name(table_name, run_id)
             with redshift_engine.connect() as connection:
                 with connection.begin():
-                    print "attempting to create new table"
                     dbutils.create_new_table(inc_table, table_name, connection)
-                    print "attempting to load"
                     dbutils.load_from_s3(
                         connection,
                         bucket_name,
@@ -423,13 +391,11 @@ def load_run(self, run_id):
 def merge_run(self, run_id, table_names):
     try:
         for table_name in table_names:
-            print "trying to merge", table_name
             pkey = neo_fbsync.PRIMARY_KEYS[table_name]
-            print "pkey =", pkey
-            inc_table = incremental_table_name(table_name, run_id)
+            inc_table = neo_fbsync.incremental_table_name(table_name, run_id)
+            logger.info("Merging table %s using join fields: %s", inc_table, pkey)
             with redshift_engine.connect() as connection:
                 with connection.begin():
-                    print "trying query"
                     connection.execute("""
                         insert into {full_table}
                         select {inc_table}.* from {inc_table}
@@ -443,12 +409,11 @@ def merge_run(self, run_id, table_names):
                     ))
         with redshift_engine.connect() as connection:
             with connection.begin():
-                print "trying to create affected efids table"
                 connection.execute("""
                     create table {affected_efids} as select efid from {users_inc}
                 """.format(
-                    affected_efids=affected_efids(run_id),
-                    users_inc=incremental_table_name(neo_fbsync.USERS_TABLE, run_id),
+                    affected_efids=neo_fbsync.affected_efids(run_id),
+                    users_inc=neo_fbsync.incremental_table_name(neo_fbsync.USERS_TABLE, run_id),
                 ))
     except Exception, exc:
         logger.error("Retrying merge of run_id %s due to \"%s\"", run_id, exc)
@@ -462,30 +427,13 @@ def merge_run(self, run_id, table_names):
 def clean_up_incremental_tables(self, run_id, table_names):
     try:
         for table_name in table_names:
-            inc_table = incremental_table_name(table_name, run_id)
+            inc_table = neo_fbsync.incremental_table_name(table_name, run_id)
+            logger.info("Cleaning up incremental table %s", inc_table)
             with redshift_engine.connect() as connection:
                 dbutils.drop_table_if_exists(inc_table, connection)
     except Exception, exc:
         logger.error("Retrying incremental table cleanup of run_id %s due to \"%s\"", run_id, exc)
         self.retry(exc=exc)
-
-
-def log_rowcount(table_name, engine=None, custom_msg=None):
-    engine = engine or redshift_engine
-    msg = custom_msg or '%s records found in %s'
-    logger.info(
-        msg,
-        dbutils.get_rowcount(table_name, engine=engine),
-        table_name
-    )
-
-
-@app.task
-def compute_top_words(run_id):
-    # get corpus from redshift
-    # compute
-    # upsert (well, delete and replace really)
-    pass
 
 
 @app.task
@@ -499,34 +447,8 @@ def compute_aggregates(run_id):
     # poster_aggregates - one row per user, dependencies = user_post_aggregates
     # user_aggregates - one row per user, dependencies =
     # (user_timeline_aggregates, poster_aggregates)
-    compute_top_words.delay(run_id)
     compute_post_aggregates.delay(run_id)
     compute_user_post_aggregates.delay(run_id)
-
-
-def upsert(run_id, final_table, efid_column_name, unbound_select_query, bindings, engine=None):
-    print "in upsert"
-    engine = engine or redshift_engine
-    connection = engine.connect()
-    with connection.begin():
-        affected_efid_subquery = "(select efid from {})".format(affected_efids(run_id))
-        connection.execute(
-            "DELETE FROM {table} where {efid_column_name} in {subquery}".format(
-                table=final_table,
-                efid_column_name=efid_column_name,
-                subquery=affected_efid_subquery,
-            )
-        )
-
-        bindings['affected_efid_subquery'] = affected_efid_subquery
-        bound_select_query = unbound_select_query.format(**bindings)
-        connection.execute(
-            """INSERT INTO {table}
-            {select_query}""".format(
-                table=final_table,
-                select_query=bound_select_query,
-            )
-        )
 
 
 @app.task
@@ -565,15 +487,17 @@ def compute_edges(run_id):
             'user_posts': neo_fbsync.USER_POST_AGGREGATES_TABLE,
         }
 
-        upsert(
+        neo_fbsync.upsert(
             run_id,
             neo_fbsync.EDGES_TABLE,
             'efid_primary',
             sql,
-            bindings
+            bindings,
+            logger=logger
         )
     except Exception, exc:
-        print "edges failed cuz", exc
+        logger.exception("edge computation for run_id %s failed due to \"%s\"", run_id, exc)
+        raise
 
 
 @app.task
@@ -582,6 +506,7 @@ def compute_post_aggregates(run_id):
         sql = """
             select
                 {posts}.post_id,
+                {posts}.efid,
                 count(distinct {likes}.liker_efid) as num_likes,
                 count(distinct {tagged}.tagged_efid) as num_tags,
                 count(distinct {comments}.comment_id) as num_comments,
@@ -592,7 +517,7 @@ def compute_post_aggregates(run_id):
                 left join {comments} on ({comments}.post_id = {posts}.post_id)
                 left join {tagged} on ({tagged}.post_id = {posts}.post_id)
                 where {posts}.efid in {affected_efid_subquery}
-                GROUP BY 1
+                GROUP BY 1, 2
         """
         bindings = {
             'posts': neo_fbsync.POSTS_TABLE,
@@ -600,38 +525,50 @@ def compute_post_aggregates(run_id):
             'comments': neo_fbsync.POST_COMMENTS_TABLE,
             'tagged': neo_fbsync.POST_TAGS_TABLE,
         }
-        upsert(
+        neo_fbsync.upsert(
             run_id,
             neo_fbsync.POST_AGGREGATES_TABLE,
             'efid',
             sql,
-            bindings
+            bindings,
+            logger=logger
         )
     except Exception, exc:
-        print "post_aggs failed cuz", exc
+        logger.exception("post aggregation for run_id %s failed due to \"%s\"", run_id, exc)
+        raise
 
 
 @app.task
 def compute_user_post_aggregates(run_id):
     try:
+        allids = "allids_{}".format(run_id)
         sql = """
             select
-                coalesce({tagged}.tagged_efid, {likes}.liker_efid, {comments}.commenter_id) as efid_user,
+                {allids}.efid as efid_user,
                 {posts}.post_id,
                 max({posts}.efid) as efid_wall,
                 max({posts}.post_from) as efid_poster,
                 max({posts}.post_type) as post_type,
                 bool_or({tagged}.tagged_efid is not null) as user_tagged,
                 bool_or({likes}.liker_efid is not null) as user_likes,
-                count({comments}.commenter_id is not null) > 0 as user_commented,
+                bool_or({comments}.commenter_id is not null) as user_commented,
                 count(distinct {comments}.comment_id) as num_comments,
                 bool_or({locales}.tagged_efid is not null) as user_placed
             from
-                {posts}
-                left join {likes} on ({likes}.post_id = {posts}.post_id)
-                left join {comments} on ({comments}.post_id = {posts}.post_id)
-                left join {tagged} on ({tagged}.post_id = {posts}.post_id)
-                left join {locales} on ({locales}.post_id = {posts}.post_id)
+                (
+                    select distinct tagged_efid as efid, post_id from v2_post_tags
+                    union
+                    select distinct liker_efid as efid, post_id from v2_post_likes
+                    union
+                    select distinct commenter_id as efid, post_id from v2_post_comments
+                    union
+                    select distinct tagged_efid as efid, post_id from v2_user_locales
+                ) {allids}
+                join {posts} on ({allids}.post_id = {posts}.post_id)
+                left join {likes} on ({allids}.efid = {likes}.liker_efid and {likes}.post_id = {posts}.post_id)
+                left join {comments} on ({allids}.efid = {comments}.commenter_id and {comments}.post_id = {posts}.post_id)
+                left join {tagged} on ({allids}.efid = {tagged}.tagged_efid and {tagged}.post_id = {posts}.post_id)
+                left join {locales} on ({allids}.efid = {locales}.tagged_efid and {locales}.post_id = {posts}.post_id)
             where {posts}.efid in {affected_efid_subquery}
             group by 1, 2
         """
@@ -641,14 +578,16 @@ def compute_user_post_aggregates(run_id):
             'comments': neo_fbsync.POST_COMMENTS_TABLE,
             'tagged': neo_fbsync.POST_TAGS_TABLE,
             'locales': neo_fbsync.USER_LOCALES_TABLE,
+            'allids': allids,
         }
 
-        upsert(
+        neo_fbsync.upsert(
             run_id,
             neo_fbsync.USER_POST_AGGREGATES_TABLE,
-            'efid_poster',
+            'efid_wall',
             sql,
-            bindings
+            bindings,
+            logger=logger
         )
 
         callback = compute_user_aggregates.s(run_id)
@@ -658,7 +597,8 @@ def compute_user_post_aggregates(run_id):
             compute_edges.s(run_id),
         ])(callback)
     except Exception, exc:
-        print "user_posts failed cuz", exc
+        logger.exception("user_post aggregation for run_id %s failed due to \"%s\"", run_id, exc)
+        raise
 
 
 @app.task
@@ -678,15 +618,17 @@ def compute_user_timeline_aggregates(run_id):
             'posts': neo_fbsync.POSTS_TABLE,
         }
 
-        upsert(
+        neo_fbsync.upsert(
             run_id,
             neo_fbsync.USER_TIMELINE_AGGREGATES_TABLE,
             'efid',
             sql,
-            bindings
+            bindings,
+            logger=logger
         )
     except Exception, exc:
-        print "user_timeine failed cuz", exc
+        logger.exception("user_timeline aggregation for run_id %s failed due to \"%s\"", run_id, exc)
+        raise
 
 
 @app.task
@@ -695,63 +637,66 @@ def compute_poster_aggregates(run_id):
         sql = """
             select
                 efid_poster,
-                count(distinct post_id) num_posts,
-                count(distinct case when user_likes then post_id else null end) as num_mine_liked,
+                count(distinct {posts}.post_id) as num_posts,
+                count(distinct case when user_likes then {user_posts}.post_id else null end) as num_mine_liked,
                 count(distinct case when user_likes then efid_user else null end) as num_friends_liked,
-                count(distinct case when user_commented then post_id else null end) as num_mine_commented_on,
+                count(distinct case when user_commented then {user_posts}.post_id else null end) as num_mine_commented_on,
                 count(distinct case when user_commented then efid_user else null end) as num_friends_commented,
-                count(distinct case when user_tagged then post_id else null end) as num_i_shared,
+                count(distinct case when user_tagged then {user_posts}.post_id else null end) as num_i_shared,
                 count(distinct case when user_tagged then efid_user else null end) as num_friends_i_tagged,
-                count(distinct efid_user) as num_friends_interacted_with_my_posts
-            from {user_posts}
+                count(distinct efid_user) as num_friends_interacted_with_my_posts,
+                count(distinct {user_posts}.post_id) as num_posts_with_edges
+            from {posts}
+            join {user_posts} on ({user_posts}.efid_wall = {posts}.efid)
             where efid_poster in {affected_efid_subquery}
             group by 1
         """
         bindings = {
+            'posts': neo_fbsync.POSTS_TABLE,
             'user_posts': neo_fbsync.USER_POST_AGGREGATES_TABLE,
         }
 
-        upsert(
+        neo_fbsync.upsert(
             run_id,
             neo_fbsync.POSTER_AGGREGATES_TABLE,
             'efid_poster',
             sql,
             bindings,
+            logger=logger
         )
     except Exception, exc:
-        print "poster failed", exc
+        logger.exception("poster aggregation for run_id %s failed due to \"%s\"", run_id, exc)
+        raise
 
 
 @app.task
-def compute_user_aggregates(run_id):
+def compute_user_aggregates(totals, run_id):
     try:
         sql = """select
             *,
-            case when num_posts > 0 then (last_activity - first_activity) / num_posts else NULL end as avg_time_between_activity,
-            case when num_posts > 0 then num_friends_interacted_with_my_posts / num_posts else NULL end as avg_friends_interacted_with_my_posts
+            case when num_posts > 0 then (last_activity - first_activity) / num_posts else NULL end as avg_days_between_activity,
+            case when num_posts > 0 then round(num_post_interactors / num_posts::decimal, 4) else NULL end as avg_post_interactors
         from (
             select
                 u.efid,
                 max({datediff_expression}) as age,
                 max(first_activity) as first_activity,
                 max(last_activity) as last_activity,
-                count(distinct {edges_table}.fbid_source) as num_friends,
+                count(distinct {edges}.efid_secondary) as num_person_edges,
                 max(num_posts) as num_posts,
-                max(num_posts_interacted_with) as num_posts_interacted_with,
-                max(num_i_like) as num_i_like,
-                max(num_i_comm) as num_i_comm,
-                max(num_shared_w_me) as num_shared_w_me,
-                max(num_mine_liked) as num_mine_liked,
-                max(num_mine_commented) as num_mine_commented,
-                max(num_i_shared) as num_i_shared,
-                max(num_stat_upd) as num_stat_upd,
-                max(num_friends_interacted_with_my_posts) as num_friends_interacted_with_my_posts,
-            join {users} u using (efid)
+                max(num_posts_with_edges) as num_posts_with_edges,
+                max(num_mine_liked) as num_posts_liked,
+                max(num_mine_commented_on) as num_posts_commented_on,
+                max(num_i_shared) as num_posts_shared,
+                max(num_stat_upd) as num_stat_updates,
+                max(num_friends_interacted_with_my_posts) as num_post_interactors
+            from {users} u
             left join {edges} on (u.efid = {edges}.efid_primary)
-            left join {post_aggregates} on (u.efid = {post_aggregates_table}.efid)
+            left join {post_aggregates} on (u.efid = {post_aggregates}.efid)
             left join {poster_aggregates} me_as_poster on (u.efid = me_as_poster.efid_poster)
+            left join {timeline_aggregates} on (u.efid = {timeline_aggregates}.efid)
             where u.efid in {affected_efid_subquery}
-            group by u.fbid
+            group by u.efid
         ) sums
         """
         bindings = {
@@ -759,27 +704,23 @@ def compute_user_aggregates(run_id):
             'edges': neo_fbsync.EDGES_TABLE,
             'post_aggregates': neo_fbsync.POST_AGGREGATES_TABLE,
             'poster_aggregates': neo_fbsync.POSTER_AGGREGATES_TABLE,
+            'timeline_aggregates': neo_fbsync.USER_TIMELINE_AGGREGATES_TABLE,
             'datediff_expression': neo_fbsync.datediff_expression(),
         }
-        upsert(
+        neo_fbsync.upsert(
             run_id,
             neo_fbsync.USER_AGGREGATES_TABLE,
             'efid',
             sql,
-            bindings
+            bindings,
+            logger=logger
         )
 
         with redshift_engine.connect() as connection:
             dbutils.drop_table_if_exists(
-                affected_efids(run_id),
+                neo_fbsync.affected_efids(run_id),
                 connection
             )
     except Exception, exc:
-        print "user aggs failed", exc
-
-
-@app.task
-def public_page_data(page_id):
-    # retrieve from FB
-    # upsert
-    pass
+        logger.exception("user aggregation for run_id %s failed due to \"%s\"", run_id, exc)
+        raise
