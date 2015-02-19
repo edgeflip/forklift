@@ -72,31 +72,3 @@ class Token(Item):
     user = ItemLinkField('User', db_key=fbid)
 
 
-class FBSyncLog(Item):
-    run_id = HashKeyField(data_type=STRING) # efid_uuid?
-    url = RangeKeyField(data_type=STRING)
-    data_type = ItemField() # status, photo, etc
-    state = ItemField() # '', E, T, L?
-
-"""
-pseudocode:
-each new extract_url call creates a row in this table, initialized to state of empty string
-upon finishing the call, the state is set to E, and the record for any next extract calls is initialized
-the last one for the particular data type kicks off a transform task
-The transform task kicks off a bunch of subtasks for each row for that data type in this table
-Each T subtask changes its state to T, and at the end checks to see if all logs for that datatype are done. if so, kicks off a load task
-The load task is simpler, because we can do a copy command for the whole directory and then just mark all of them L; though maybe we can do them individually for error/retrying/giving up on bad ones
-After load is done, we kick off aggregate tasks. Each agg task declares its dependencies, and at the end of each task it checks to see which ones are dependencies and queues those ones up
-"""
-
-
-"""
-the thing that kicks off the run picks all of the new tokens we want, and assigns one run id
-
-each new extract_url call creates a row in this table, initialized to state of empty string
-upon finishing the call, the state is set to E, and the record for any next extract calls is initialized
-the last one for the particular data type kicks off a transform task
-The transform task kicks off a bunch of subtasks for each row for that data type in this table
-Each T subtask changes its state to T, and at the end checks to see if all logs for that datatype and run are done. if so, kicks off the load task
-
-"""
