@@ -29,7 +29,7 @@ BROKER_URL = 'amqp://{user}:{pass}@{host}:5672/{vhost}'.format(**RABBITMQ)
 CELERY_IMPORTS = ('forklift.tasks', )
 CELERY_RESULT_BACKEND = 'redis://{host}:6379'.format(**REDIS_RESULT_BACKEND)
 CELERYD_PREFETCH_MULTIPLIER = 1
-CELERY_ACCEPT_CONTENT = ['pickle']
+CELERY_ACCEPT_CONTENT = ['pickle', 'json'] # json so we can inspect workers
 CELERYD_MAX_TASKS_PER_CHILD = 5
 
 QUEUE_ARGS = {'x-ha-policy': 'all'}
@@ -46,7 +46,6 @@ CELERY_QUEUES = (
     Queue('load', routing_key='load', queue_arguments=QUEUE_ARGS),
     Queue('merge', routing_key='merge', queue_arguments=QUEUE_ARGS),
     Queue('clean_up_incremental_tables', routing_key='clean_up_incremental_tables', queue_arguments=QUEUE_ARGS),
-    Queue('compute_top_words', routing_key='compute_top_words', queue_arguments=QUEUE_ARGS),
     Queue('compute_aggregates', routing_key='compute_aggregates', queue_arguments=QUEUE_ARGS),
     Queue('compute_edges', routing_key='compute_edges', queue_arguments=QUEUE_ARGS),
     Queue('compute_post_aggregates', routing_key='compute_post_aggregates', queue_arguments=QUEUE_ARGS),
@@ -70,7 +69,6 @@ CELERY_ROUTES = {
     'forklift.tasks.load_run': {'queue': 'load', 'routing_key': 'load'},
     'forklift.tasks.merge_run': {'queue': 'merge', 'routing_key': 'merge'},
     'forklift.tasks.clean_up_incremental_tables': {'queue': 'clean_up_incremental_tables', 'routing_key': 'clean_up_incremental_tables'},
-    'forklift.tasks.compute_top_words': {'queue': 'compute_top_words', 'routing_key': 'compute_top_words'},
     'forklift.tasks.compute_aggregates': {'queue': 'compute_aggregates', 'routing_key': 'compute_aggregates'},
     'forklift.tasks.compute_edges': {'queue': 'compute_edges', 'routing_key': 'compute_edges'},
     'forklift.tasks.compute_post_aggregates': {'queue': 'compute_post_aggregates', 'routing_key': 'compute_post_aggregates'},
