@@ -735,22 +735,24 @@ def compute_user_aggregates(totals, run_id):
 def cache_tables(run_id):
     try:
         tables_to_sync = (
-            neo_fbsync.USERS_TABLE,
-            neo_fbsync.USER_AGGREGATES_TABLE,
-            neo_fbsync.USER_ACTIVITIES_TABLE,
-            neo_fbsync.USER_LIKES_TABLE,
-            neo_fbsync.USER_PERMISSIONS_TABLE,
-            neo_fbsync.USER_LOCALES_TABLE,
-            neo_fbsync.USER_LANGUAGES_TABLE,
+            (neo_fbsync.USERS_TABLE, 'efid', None),
+            (neo_fbsync.USER_AGGREGATES_TABLE, 'efid', None),
+            (neo_fbsync.USER_ACTIVITIES_TABLE, None, ('efid',)),
+            (neo_fbsync.USER_LIKES_TABLE, None, ('efid',)),
+            (neo_fbsync.USER_PERMISSIONS_TABLE, None, ('efid',)),
+            (neo_fbsync.USER_LOCALES_TABLE, None, ('tagged_efid',)),
+            (neo_fbsync.USER_LANGUAGES_TABLE, None, ('efid',)),
         )
-        for aggregate_table in tables_to_sync:
+        for aggregate_table, primary_key, indexed_columns in tables_to_sync:
             dbutils.cache_table(
                 redshift_engine,
                 rds_cache_engine,
                 '{}_staging'.format(aggregate_table),
                 aggregate_table,
                 '{}_old'.format(aggregate_table),
-                ','
+                ',',
+                primary_key=primary_key,
+                indexed_columns=indexed_columns,
             )
 
         batch_push.delay(run_id)
