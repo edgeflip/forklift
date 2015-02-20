@@ -769,6 +769,7 @@ def batch_push(run_id):
         queue = Queue('capuchin_efid_batch', Exchange('capuchin'), 'capuchin.efid_batch')
         with app.producer_or_acquire(None) as producer:
             for batch in batcher(query, 100):
+                batch = batch[0]
                 logger.info("Sending batch %s", batch)
                 producer.publish(
                     batch,
