@@ -9,16 +9,18 @@ import re
 import tempfile
 import uuid
 import json
+from kombu import Exchange, Queue
 
 from forklift.db.base import rds_cache_engine, redshift_engine, RDSCacheSession, RDSSourceSession
 from forklift.db import utils as dbutils
 from forklift import facebook
 from forklift.loaders import neo_fbsync
 from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, FBSyncLoader
-from forklift.models.fbsync import FBSyncPageTask
+from forklift.models.fbsync import FBSyncPageTask, FBSyncRunList
 from forklift.models.raw import FBToken
 from forklift.nlp import tfidf
 from forklift.s3.utils import get_conn_s3, write_string_to_key, key_to_string, write_file_to_key, get_bucket
+from forklift.utils import batcher
 from celery.utils.log import get_task_logger
 
 
@@ -721,6 +723,59 @@ def compute_user_aggregates(totals, run_id):
                 neo_fbsync.affected_efids(run_id),
                 connection
             )
+
     except Exception, exc:
         logger.exception("user aggregation for run_id %s failed due to \"%s\"", run_id, exc)
         raise
+
+    cache_tables.delay(run_id)
+
+
+@app.task
+def cache_tables(run_id):
+    try:
+        tables_to_sync = (
+            neo_fbsync.USERS_TABLE,
+            neo_fbsync.USER_AGGREGATES_TABLE,
+            neo_fbsync.USER_ACTIVITIES_TABLE,
+            neo_fbsync.USER_LIKES_TABLE,
+            neo_fbsync.USER_PERMISSIONS_TABLE,
+            neo_fbsync.USER_LOCALES_TABLE,
+            neo_fbsync.USER_LANGUAGES_TABLE,
+        )
+        for aggregate_table in tables_to_sync:
+            dbutils.cache_table(
+                redshift_engine,
+                rds_cache_engine,
+                '{}_staging'.format(aggregate_table),
+                aggregate_table,
+                '{}_old'.format(aggregate_table),
+                ','
+            )
+
+        batch_push.delay(run_id)
+    except Exception, exc:
+        logger.exception("Table caching failed due to \"%s\"", exc)
+
+
+@app.task
+def batch_push(run_id):
+    try:
+        db_session = RDSCacheSession()
+        query = db_session.query(FBSyncRunList).\
+            filter_by(run_id=str(run_id)).\
+            values(FBSyncRunList.efid)
+
+        queue = Queue('capuchin_efid_batch', Exchange('capuchin'), 'capuchin.efid_batch')
+        with app.producer_or_acquire(None) as producer:
+            for batch in batcher(query, 100):
+                logger.info("Sending batch %s", batch)
+                producer.publish(
+                    batch,
+                    exchange=queue.exchange,
+                    routing_key=queue.routing_key,
+                    declare=[queue],
+                    serializer='json',
+                )
+    except Exception, exc:
+        logger.exception("Batch push failed due to \"%s\"", exc)

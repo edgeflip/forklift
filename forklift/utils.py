@@ -2,10 +2,9 @@ def batcher(generator, batch_size):
     num_in_batch = 0
     batch = []
     for item in generator:
-        if num_in_batch < batch_size:
-            batch.append(item)
-            num_in_batch += 1
-        else:
+        batch.append(item)
+        num_in_batch += 1
+        if num_in_batch >= batch_size:
             num_in_batch = 0
             yield batch
             batch = []
