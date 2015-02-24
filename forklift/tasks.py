@@ -684,6 +684,7 @@ def compute_user_aggregates(totals, run_id):
                 max({datediff_expression}) as age,
                 max(first_activity) as first_activity,
                 max(last_activity) as last_activity,
+                count({taggable_friends}.name) as num_taggable_friends,
                 count(distinct {edges}.efid_secondary) as num_person_edges,
                 max(num_posts) as num_posts,
                 max(num_posts_with_edges) as num_posts_with_edges,
@@ -697,6 +698,7 @@ def compute_user_aggregates(totals, run_id):
             left join {post_aggregates} on (u.efid = {post_aggregates}.efid)
             left join {poster_aggregates} me_as_poster on (u.efid = me_as_poster.efid_poster)
             left join {timeline_aggregates} on (u.efid = {timeline_aggregates}.efid)
+            left join {taggable_friends} on (u.efid = {taggable_friends}.efid)
             where u.efid in {affected_efid_subquery}
             group by u.efid
         ) sums
@@ -707,6 +709,7 @@ def compute_user_aggregates(totals, run_id):
             'post_aggregates': neo_fbsync.POST_AGGREGATES_TABLE,
             'poster_aggregates': neo_fbsync.POSTER_AGGREGATES_TABLE,
             'timeline_aggregates': neo_fbsync.USER_TIMELINE_AGGREGATES_TABLE,
+            'taggable_friends': neo_fbsync.USER_FRIENDS_TABLE,
             'datediff_expression': neo_fbsync.datediff_expression(),
         }
         neo_fbsync.upsert(

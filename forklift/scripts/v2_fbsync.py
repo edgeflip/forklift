@@ -54,7 +54,6 @@ if __name__ == '__main__':
                 FBSyncPageTask.extracted: None,
                 FBSyncPageTask.transformed: None,
                 FBSyncPageTask.loaded: None,
-                FBSyncPageTask.aggregated: None,
             })
         else:
             stop_datetime = datetime.min

@@ -8,7 +8,6 @@ from urlparse import urlparse
 
 LOG = logging.getLogger(__name__)
 DEFAULT_DELIMITER = ","
-FB_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 POSTS_TABLE = 'v2_posts'
 EDGES_TABLE = 'v2_edges'
 POST_LIKES_TABLE = 'v2_post_likes'
@@ -96,7 +95,7 @@ def transform_public_profile(input_data, efid, appid, crawl_type, post_id, post_
         input_data.get('locale', ''),
         input_data.get('location', {}).get('id', ''),
         input_data.get('location', {}).get('name', ''),
-        facebook.parse_ts(input_data['updated_time']).strftime(FB_DATE_FORMAT),
+        facebook.convert_ts(input_data.get('updated_time', '')),
     )
 
     output_line = tuple(transform_field(field, DEFAULT_DELIMITER) for field in profile_fields)
@@ -347,13 +346,12 @@ def datediff_expression():
     return "datediff('year', birthday, getdate())"
 
 
-
 class CommentFromJson(object):
     def __init__(self, comment_json, appid):
         self.comment_id = get_or_create_efid(comment_json.get('id'), appid)
         self.commenter_id = get_or_create_efid(comment_json.get('from', {}).get('id'), appid)
         self.message = comment_json.get('message')
-        self.comment_ts = facebook.parse_ts(comment_json.get('created_time')).strftime(FB_DATE_FORMAT)
+        self.comment_ts = facebook.convert_ts(comment_json.get('created_time'))
         self.like_count = comment_json.get('like_count')
         self.user_likes = comment_json.get('user_likes')
 
@@ -363,9 +361,9 @@ class FeedPostFromJson(object):
     def __init__(self, post_json, data_type, appid):
         self.post_id = str(post_json['id'])
         if 'updated_time' in post_json:
-            self.post_ts = facebook.parse_ts(post_json['updated_time']).strftime(FB_DATE_FORMAT)
+            self.post_ts = facebook.convert_ts(post_json['updated_time'])
         elif 'created_time' in post_json:
-            self.post_ts = facebook.parse_ts(post_json['created_time']).strftime(FB_DATE_FORMAT)
+            self.post_ts = facebook.convert_ts(post_json['created_time'])
         self.post_type = data_type
         self.post_app = post_json['application']['id'] if 'application' in post_json else ""
         self.post_from = post_json['from']['id'] if 'from' in post_json else ""
