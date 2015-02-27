@@ -17,7 +17,7 @@ from forklift import facebook
 from forklift.loaders import neo_fbsync
 from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, FBSyncLoader
 from forklift.models.fbsync import FBSyncPageTask, FBSyncRunList
-from forklift.models.raw import FBToken
+from forklift.models.magnus import FBUserToken, FBAppUser
 from forklift.nlp import tfidf
 from forklift.s3.utils import get_conn_s3, write_string_to_key, key_to_string, write_file_to_key, get_bucket
 from forklift.utils import batcher
@@ -158,6 +158,7 @@ def extract_url(
     url,
     run_id,
     efid,
+    fbid,
     appid,
     crawl_type,
     post_id=None,
@@ -165,11 +166,15 @@ def extract_url(
     stop_datetime=None,
 ):
     try:
-        prod_session = RDSSourceSession()
-        token = prod_session.query(FBToken).get((efid, appid))
-        if token is None or token.expiration < datetime.today():
-            raise ExpiredTokenError("Expired token for {}".format(efid))
         db_session = RDSCacheSession()
+        token = db_session.query(FBUserToken).\
+            filter(FBUserToken.app_user_id==FBAppUser.app_user_id).\
+            filter(FBAppUser.efid==efid).\
+            filter(FBAppUser.fb_app_id==appid).\
+            filter(FBUserToken.expiration > datetime.today()).\
+            one()
+        if token is None:
+            raise ExpiredTokenError("Expired token for {}".format(efid))
 
         # update the task log
         unique_identifier = str(uuid.uuid4())
@@ -202,17 +207,17 @@ def extract_url(
                 next_comms = item.get('comments', {}).get('paging', {}).get('next', {})
                 if next_comms:
                     logger.info("Found comments in need of pagination for post_id %s", item['id'])
-                    extract_url.delay(next_comms, run_id, efid, appid, 'post_comments', post_id=item['id'], from_asid=post_from)
+                    extract_url.delay(next_comms, run_id, efid, fbid, appid, 'post_comments', post_id=item['id'], from_asid=post_from)
 
                 next_likes = item.get('likes', {}).get('paging', {}).get('next', {})
                 if next_likes:
                     logger.info("Found likes in need of pagination for post_id %s", item['id'])
-                    extract_url.delay(next_likes, run_id, efid, appid, 'post_likes', post_id=item['id'], from_asid=post_from)
+                    extract_url.delay(next_likes, run_id, efid, fbid, appid, 'post_likes', post_id=item['id'], from_asid=post_from)
 
                 next_tags = item.get('tags', {}).get('tags', {}).get('next', {})
                 if next_tags:
                     logger.info("Found tags in need of pagination for post_id %s", item['id'])
-                    extract_url.delay(next_tags, run_id, efid, appid, 'post_tags', post_id=item['id'], from_asid=post_from)
+                    extract_url.delay(next_tags, run_id, efid, fbid, appid, 'post_tags', post_id=item['id'], from_asid=post_from)
 
             task_log.extracted = datetime.today()
             task_log.post_id = post_id
@@ -227,13 +232,13 @@ def extract_url(
                 and data['error'].get('error_subcode') in [458, 459, 460, 463, 464, 467]
             ):
                 token.expiration = datetime.today() # TODO: parse the real expiration from the message?
-                prod_session.commit()
+                db_session.commit()
                 raise ExpiredTokenError("Expired token for {}, return value = {}".format(efid, data))
 
         next_url = data.get('paging', {}).get('next')
         if next_url and stop_datetime and min_datetime > stop_datetime:
             logger.info("More items are available for efid %d, crawl_type %s", efid, crawl_type)
-            extract_url.delay(next_url, run_id, efid, appid, crawl_type, post_id=post_id, from_asid=from_asid, stop_datetime=stop_datetime)
+            extract_url.delay(next_url, run_id, efid, fbid, appid, crawl_type, post_id=post_id, from_asid=from_asid, stop_datetime=stop_datetime)
         else:
             pages_to_transform = db_session.query(FBSyncPageTask).filter_by(
                 efid=efid,
@@ -285,6 +290,7 @@ def transform_page(self, bucket_name, json_key_name, crawl_type, efid, appid, ru
             crawl_type=crawl_type,
             url=url,
         )
+        db_session.close()
         task_log = task_set.one()
         if not task_log:
             logger.error("Task log not found")
@@ -315,7 +321,9 @@ def transform_page(self, bucket_name, json_key_name, crawl_type, efid, appid, ru
                 file_obj.seek(0, os.SEEK_SET)
                 write_file_to_key(NEO_CSV_BUCKET, csv_key_name, file_obj)
 
+        db_session = RDSCacheSession()
         task_log.transformed = datetime.today()
+        db_session.merge(task_log)
         db_session.commit()
         check_load.delay(run_id)
 
@@ -333,29 +341,32 @@ def transform_page(self, bucket_name, json_key_name, crawl_type, efid, appid, ru
 
 @app.task
 def check_load(run_id):
-    transform_not_done = rds_cache_engine.execute("""
-        select 1
-        from fbsync_run_lists rl
-        join fbsync_page_tasks pt on (rl.run_id = pt.last_run_id and rl.efid = pt.efid)
-        where rl.run_id = '{}'
-        and (
-            pt.extracted is null or
-            pt.transformed is null
-        )
-    """.format(run_id)).fetchone()
-    if transform_not_done:
-        logger.info("Transform phase for run_id %s not done yet", run_id)
-        return
+    try:
+        transform_not_done = rds_cache_engine.execute("""
+            select 1
+            from "forklift"."fbsync_run_lists" rl
+            join "forklift"."fbsync_page_tasks" pt on (rl.run_id = pt.last_run_id and rl.efid = pt.efid)
+            where rl.run_id = '{}'
+            and (
+                pt.extracted is null or
+                pt.transformed is null
+            )
+        """.format(run_id)).fetchone()
+        if transform_not_done:
+            logger.info("Transform phase for run_id %s not done yet", run_id)
+            return
 
-    load_not_started = rds_cache_engine.execute(
-        "update fbsync_runs set load_started = true where run_id = '{}' and load_started = false returning 1".format(run_id)
-    ).fetchone()
+        load_not_started = rds_cache_engine.execute(
+            """update "forklift"."fbsync_runs" set load_started = true where run_id = '{}' and load_started = false returning 1""".format(run_id)
+        ).fetchone()
 
-    if load_not_started:
-        logger.info("Kicking off load for run_id %s", run_id)
-        load_run.delay(run_id)
-    else:
-        logger.info("Load already started for run_id %s, skipping", run_id)
+        if load_not_started:
+            logger.info("Kicking off load for run_id %s", run_id)
+            load_run.delay(run_id)
+        else:
+            logger.info("Load already started for run_id %s, skipping", run_id)
+    except Exception, exc:
+        logger.error("check_load could not run because of '%s'", exc)
 
 
 @app.task(bind=True, default_retry_delay=5, max_retries=5)

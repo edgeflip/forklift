@@ -42,6 +42,8 @@ def parse_ts(time_string):
 
 
 def convert_ts(time_string):
+    if not time_string:
+        return None
     return parse_ts(time_string).strftime(FB_DATE_FORMAT)
 
 def parse_date(date_string):

@@ -130,14 +130,14 @@ def transform_post_comments(input_data, efid, appid, crawl_type, post_id, post_f
 
 
 def transform_post_likes(input_data, efid, appid, crawl_type, post_id, post_from):
-    likes = (get_or_create_efid(row['id'], appid) for row in input_data['data'])
+    likes = (get_or_create_efid(row['id'], appid, row.get('name', None)) for row in input_data['data'])
     return {
         POST_LIKES_TABLE: assemble_post_like_lines(post_id, likes, get_or_create_efid(post_from, appid), efid, DEFAULT_DELIMITER)
     }
 
 
 def transform_post_tags(input_data, efid, appid, crawl_type, post_id, post_from):
-    tagged_ids = (get_or_create_efid(row['id'], appid) for row in input_data)
+    tagged_ids = (get_or_create_efid(row['id'], appid, row.get('name', None)) for row in input_data)
     return {
         POST_TAGS_TABLE: assemble_post_tag_lines(post_id, tagged_ids, get_or_create_efid(post_from, appid), efid, DEFAULT_DELIMITER)
     }
@@ -348,8 +348,8 @@ def datediff_expression():
 
 class CommentFromJson(object):
     def __init__(self, comment_json, appid):
-        self.comment_id = get_or_create_efid(comment_json.get('id'), appid)
-        self.commenter_id = get_or_create_efid(comment_json.get('from', {}).get('id'), appid)
+        self.comment_id = comment_json.get('id')
+        self.commenter_id = get_or_create_efid(comment_json.get('from', {}).get('id'), appid, comment_json.get('from', {}).get('name', None))
         self.message = comment_json.get('message')
         self.comment_ts = facebook.convert_ts(comment_json.get('created_time'))
         self.like_count = comment_json.get('like_count')
