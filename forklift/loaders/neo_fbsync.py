@@ -38,15 +38,15 @@ def transform_stream(input_data, efid, appid, data_type, post_id, post_from):
     delim = DEFAULT_DELIMITER
 
     for post in posts:
-        output_lines[POSTS_TABLE].append(assemble_post_line(post, efid, delim))
+        output_lines[POSTS_TABLE].append(assemble_post_line(post, appid, efid, delim))
         if hasattr(post, 'like_ids'):
-            output_lines[POST_LIKES_TABLE].extend(assemble_post_like_lines(post.post_id, post.like_ids, post.post_from, efid, delim))
+            output_lines[POST_LIKES_TABLE].extend(assemble_post_like_lines(post.post_id, post.like_ids, post.post_from, appid, efid, delim))
         if hasattr(post, 'tagged_ids'):
-            output_lines[POST_TAGS_TABLE].extend(assemble_post_tag_lines(post.post_id, post.tagged_ids, post.post_from, efid, delim))
+            output_lines[POST_TAGS_TABLE].extend(assemble_post_tag_lines(post.post_id, post.tagged_ids, post.post_from, appid, efid, delim))
         if hasattr(post, 'comments'):
             output_lines[POST_COMMENTS_TABLE].extend(assemble_comment_lines(post.post_id, post.comments, efid, appid, delim))
 
-        output_lines[USER_LOCALES_TABLE].extend(assemble_locale_lines(post, efid, delim))
+        output_lines[USER_LOCALES_TABLE].extend(assemble_locale_lines(post, appid, efid, delim))
 
     return output_lines
 
@@ -132,14 +132,14 @@ def transform_post_comments(input_data, efid, appid, crawl_type, post_id, post_f
 def transform_post_likes(input_data, efid, appid, crawl_type, post_id, post_from):
     likes = (get_or_create_efid(row['id'], appid, row.get('name', None)) for row in input_data['data'])
     return {
-        POST_LIKES_TABLE: assemble_post_like_lines(post_id, likes, get_or_create_efid(post_from, appid), efid, DEFAULT_DELIMITER)
+        POST_LIKES_TABLE: assemble_post_like_lines(post_id, likes, post_from, appid, efid, DEFAULT_DELIMITER)
     }
 
 
 def transform_post_tags(input_data, efid, appid, crawl_type, post_id, post_from):
     tagged_ids = (get_or_create_efid(row['id'], appid, row.get('name', None)) for row in input_data)
     return {
-        POST_TAGS_TABLE: assemble_post_tag_lines(post_id, tagged_ids, get_or_create_efid(post_from, appid), efid, DEFAULT_DELIMITER)
+        POST_TAGS_TABLE: assemble_post_tag_lines(post_id, tagged_ids, post_from, appid, efid, DEFAULT_DELIMITER)
     }
 
 
@@ -265,15 +265,16 @@ def assemble_page_lines(input_data, efid):
     return output_lines
 
 
-def assemble_post_like_lines(post_id, like_ids, post_from, efid, delim):
+def assemble_post_like_lines(post_id, like_ids, post_from, appid, efid, delim):
     return [
-        [transform_field(f, delim) for f in (post_id, user_id, post_from)]
+        [transform_field(f, delim) for f in (post_id, get_or_create_efid(user_id, appid), post_from)]
         for user_id in like_ids
     ]
 
-def assemble_post_tag_lines(post_id, tagged_ids, post_from, efid, delim):
+
+def assemble_post_tag_lines(post_id, tagged_ids, post_from, appid, efid, delim):
     return [
-        [transform_field(f, delim) for f in (post_id, user_id, post_from)]
+        [transform_field(f, delim) for f in (post_id, get_or_create_efid(user_id, appid), post_from)]
         for user_id in tagged_ids
     ]
 
@@ -300,12 +301,13 @@ def assemble_comment_lines(post_id, comments, efid, appid, delim):
     return comment_lines
 
 
-def assemble_locale_lines(post, efid, delim):
+def assemble_locale_lines(post, appid, efid, delim):
     locale_lines = []
     if not hasattr(post, 'locale'):
         return locale_lines
 
-    for tagged_asid in list(getattr(post, 'tagged_ids', [])) + [efid]:
+    tagged_efids = [get_or_create_efid(asid, appid) for asid in getattr(post, 'tagged_ids', [])]
+    for tagged_efid in tagged_efids + [efid]:
         locale_fields = (
             post.locale.get('locale_id', ''),
             post.locale.get('locale_name', ''),
@@ -315,7 +317,7 @@ def assemble_locale_lines(post, efid, delim):
             post.locale.get('locale_country', ''),
             post.locale.get('locale_address', ''),
             post.post_id,
-            tagged_asid
+            tagged_efid
         )
         locale_lines.append(
             [transform_field(f, delim) for f in locale_fields]
@@ -324,7 +326,7 @@ def assemble_locale_lines(post, efid, delim):
     return locale_lines
 
 
-def assemble_post_line(post, efid, delim):
+def assemble_post_line(post, appid, efid, delim):
     post_fields = (
         efid,
         post.post_id,
@@ -366,7 +368,7 @@ class FeedPostFromJson(object):
             self.post_ts = facebook.convert_ts(post_json['created_time'])
         self.post_type = data_type
         self.post_app = post_json['application']['id'] if 'application' in post_json else ""
-        self.post_from = post_json['from']['id'] if 'from' in post_json else ""
+        self.post_from = get_or_create_efid(post_json['from']['id'], appid) if 'from' in post_json else ""
         self.post_link = post_json.get('link', "")
         try:
             self.post_link_domain = urlparse(self.post_link).hostname if (self.post_link) else ""
