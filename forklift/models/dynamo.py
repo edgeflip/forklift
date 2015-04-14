@@ -4,6 +4,7 @@ from faraday import (
     ItemLinkField,
     NUMBER,
     DATETIME,
+    STRING,
     STRING_SET,
     JSON,
     BOOL,
@@ -69,3 +70,5 @@ class Token(Item):
     token = ItemField()
 
     user = ItemLinkField('User', db_key=fbid)
+
+

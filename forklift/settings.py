@@ -29,28 +29,37 @@ BROKER_URL = 'amqp://{user}:{pass}@{host}:5672/{vhost}'.format(**RABBITMQ)
 CELERY_IMPORTS = ('forklift.tasks', )
 CELERY_RESULT_BACKEND = 'redis://{host}:6379'.format(**REDIS_RESULT_BACKEND)
 CELERYD_PREFETCH_MULTIPLIER = 1
-CELERY_ACCEPT_CONTENT = ['pickle']
+CELERY_ACCEPT_CONTENT = ['pickle', 'json'] # json so we can inspect workers
 CELERYD_MAX_TASKS_PER_CHILD = 5
 
 QUEUE_ARGS = {'x-ha-policy': 'all'}
-CELERY_QUEUES = (
-    Queue('fbid_hourly', routing_key='hourly.fbid', queue_arguments=QUEUE_ARGS),
-    Queue('friend_fbid_hourly', routing_key='hourly.friend_fbid', queue_arguments=QUEUE_ARGS),
-    Queue('ip_hourly', routing_key='hourly.ip', queue_arguments=QUEUE_ARGS),
-    Queue('visit_hourly', routing_key='hourly.visit', queue_arguments=QUEUE_ARGS),
-    Queue('misc_hourly', routing_key='hourly.misc', queue_arguments=QUEUE_ARGS),
-    Queue('fbsync', routing_key='fbsync', queue_arguments=QUEUE_ARGS),
-)
 
 CELERY_ROUTES = {
-    'forklift.tasks.fbid_load_hour': {'queue': 'fbid_hourly', 'routing_key': 'hourly.fbid'},
-    'forklift.tasks.friend_fbid_load_hour': {'queue': 'friend_fbid_hourly', 'routing_key': 'hourly.friend_fbid'},
-    'forklift.tasks.ip_load_hour': {'queue': 'ip_hourly', 'routing_key': 'hourly.ip'},
-    'forklift.tasks.visit_load_hour': {'queue': 'visit_hourly', 'routing_key': 'hourly.visit'},
-    'forklift.tasks.misc_load_hour': {'queue': 'misc_hourly', 'routing_key': 'hourly.misc'},
-    'forklift.tasks.fbsync_process': {'queue': 'fbsync', 'routing_key': 'fbsync'},
-    'forklift.tasks.fbsync_load': {'queue': 'fbsync', 'routing_key': 'fbsync'},
+    'forklift.tasks.extract_url': {'queue': 'fbsync_extract', 'routing_key': 'fbsync.extract'},
+    'forklift.tasks.transform_page': {'queue': 'fbsync_transform', 'routing_key': 'fbsync.transform'},
+    'forklift.tasks.check_load': {'queue': 'fbsync_check_load', 'routing_key': 'fbsync.check_load'},
+    'forklift.tasks.load_run': {'queue': 'fbsync_load', 'routing_key': 'fbsync.load'},
+    'forklift.tasks.merge_run': {'queue': 'fbsync_merge', 'routing_key': 'fbsync.merge'},
+    'forklift.tasks.clean_up_incremental_tables': {'queue': 'fbsync_clean_up_incremental_tables', 'routing_key': 'fbsync.clean_up_incremental_tables'},
+    'forklift.tasks.compute_aggregates': {'queue': 'fbsync_aggregates', 'routing_key': 'fbsync.aggregates'},
+    'forklift.tasks.compute_edges': {'queue': 'fbsync_edges', 'routing_key': 'fbsync.aggregates.edge'},
+    'forklift.tasks.compute_post_aggregates': {'queue': 'fbsync_post_aggregates', 'routing_key': 'fbsync.aggregates.post'},
+    'forklift.tasks.compute_user_post_aggregates': {'queue': 'fbsync_user_post_aggregates', 'routing_key': 'fbsync.aggregates.user_post'},
+    'forklift.tasks.compute_user_timeline_aggregates': {'queue': 'fbsync_user_timeline_aggregates', 'routing_key': 'fbsync.aggregates.user_timeline'},
+    'forklift.tasks.compute_poster_aggregates': {'queue': 'fbsync_poster_aggregates', 'routing_key': 'fbsync.aggregates.poster'},
+    'forklift.tasks.compute_user_aggregates': {'queue': 'fbsync_user_aggregates', 'routing_key': 'fbsync.aggregates.user'},
+    'forklift.tasks.cache_tables': {'queue': 'fbsync_cache_tables', 'routing_key': 'fbsync.cache_tables'},
+    'forklift.tasks.batch_push': {'queue': 'fbsync_batch_push', 'routing_key': 'fbsync.batch_push'},
 }
+
+CELERY_QUEUES = []
+for route, config in CELERY_ROUTES.iteritems():
+    CELERY_QUEUES.append(Queue(
+        config['queue'],
+        routing_key=config['routing_key'],
+        queue_arguments=QUEUE_ARGS
+    ))
+
 
 LOGGING = {
     'version': 1,

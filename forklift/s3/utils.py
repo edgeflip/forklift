@@ -66,7 +66,9 @@ def stream_files_from(bucket_names):
     conn_s3.close()
 
 
-def write_string_to_key(bucket, key_name, string):
+def write_string_to_key(bucket_name, key_name, string):
+    s3_conn = get_conn_s3()
+    bucket = s3_conn.get_bucket(bucket_name)
     key = Key(bucket)
     key.key = key_name
     key.set_contents_from_string(string + "\n")
@@ -78,6 +80,13 @@ def key_to_local_file(bucket_name, s3_key_name, file_obj):
     bucket = s3_conn.get_bucket(bucket_name)
     key = bucket.get_key(s3_key_name)
     key.get_contents_to_file(file_obj)
+
+
+def key_to_string(bucket_name, s3_key_name):
+    s3_conn = get_conn_s3()
+    bucket = s3_conn.get_bucket(bucket_name)
+    key = bucket.get_key(s3_key_name)
+    return key.get_contents_as_string()
 
 
 def write_file_to_key(bucket_name, key, file_obj):
@@ -95,6 +104,10 @@ def write_filename_to_key(bucket_name, filename):
     k = red.new_key(filename)
     k.set_contents_from_filename('%s.csv' % filename)
     logger.info("Uploaded %s to s3" % filename)
+
+
+def get_bucket(bucket_name):
+    return get_conn_s3().get_bucket(bucket_name)
 
 
 class S3ReservoirSampler(ReservoirSampler):

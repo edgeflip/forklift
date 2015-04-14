@@ -93,3 +93,13 @@ class EdgeflipFbid(Base):
     __tablename__ = 'edgeflip_fbids'
 
     fbid = Column(BigInteger, primary_key=True)
+
+class FBToken(Base):
+    __tablename__ = 'fb_tokens'
+
+    efid = Column(BigInteger, primary_key=True)
+    appid = Column(BigInteger, primary_key=True)
+    fbid = Column(BigInteger)
+    api = Column(String)
+    access_token = Column(String)
+    expiration = Column(DateTime)

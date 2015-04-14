@@ -3,7 +3,8 @@ from logging import debug, info, warning
 import os
 import psycopg2
 import tempfile
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.exc import ProgrammingError, IntegrityError
+from sqlalchemy.orm.exc import NoResultFound
 from contextlib import contextmanager
 from forklift.s3.utils import key_to_local_file, write_file_to_key
 from forklift.settings import AWS_ACCESS_KEY, AWS_SECRET_KEY, rds_source_config, redshift_config
@@ -328,7 +329,16 @@ def copy_from_file(engine, table, file_obj, delim):
     connection.close()
 
 
-def cache_table(redshift_engine, cache_engine, staging_table, final_table, old_table, delim):
+def cache_table(
+    redshift_engine,
+    cache_engine,
+    staging_table,
+    final_table,
+    old_table,
+    delim,
+    primary_key=None,
+    indexed_columns=None,
+):
     s3_key_name = 'redshift_sync/{}'.format(final_table)
     with redshift_engine.connect() as connection:
         unload_to_s3(
@@ -345,6 +355,8 @@ def cache_table(redshift_engine, cache_engine, staging_table, final_table, old_t
             postgres_to_postgres_column_map
         )
 
+    if primary_key:
+        columns += ", PRIMARY KEY ({})".format(primary_key)
     file_obj = tempfile.NamedTemporaryFile()
     key_to_local_file(
         BUCKET_NAME,
@@ -354,7 +366,11 @@ def cache_table(redshift_engine, cache_engine, staging_table, final_table, old_t
     file_obj.seek(0, os.SEEK_SET)
     with cache_engine.connect() as connection:
         drop_table_if_exists(staging_table, connection)
-        connection.execute("CREATE TABLE {0} ({1})".format(staging_table, columns))
+        sql = "CREATE TABLE {0} ({1})".format(staging_table, columns)
+        connection.execute(sql)
+        if indexed_columns:
+            for indexed_column in indexed_columns:
+                connection.execute("create index on {} ({})".format(staging_table, indexed_column))
 
     copy_from_file(
         cache_engine,
@@ -364,3 +380,25 @@ def cache_table(redshift_engine, cache_engine, staging_table, final_table, old_t
     )
 
     deploy_table(final_table, staging_table, old_table, cache_engine)
+
+
+def raw_table_name(table_base):
+    return "{}_raw".format(table_base)
+
+
+def old_table_name(table_base):
+    return "{}_old".format(table_base)
+
+
+def get_one_or_create(session, model, **kwargs):
+    try:
+        return session.query(model).filter_by(**kwargs).one(), True
+    except NoResultFound:
+        created = model(**kwargs)
+        try:
+            session.add(created)
+            session.commit()
+            return created, False
+        except IntegrityError:
+            session.rollback()
+            return session.query(model).filter_by(**kwargs).one(), True
