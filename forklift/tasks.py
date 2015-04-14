@@ -13,7 +13,7 @@ from kombu import Exchange, Queue
 from forklift.db.base import rds_cache_engine, redshift_engine, RDSCacheSession
 from forklift.db import utils as dbutils
 from forklift import facebook
-from forklift.loaders import neo_fbsync
+from forklift.loaders import fbsync
 from forklift.models.fbsync import FBSyncPageTask, FBSyncRunList
 from forklift.models.magnus import FBUserToken, FBAppUser
 from forklift.s3.utils import write_string_to_key, key_to_string, write_file_to_key, get_bucket
@@ -182,7 +182,7 @@ def transform_page(self, bucket_name, json_key_name, crawl_type, efid, appid, ru
 
         if input_string:
             input_data = json.loads(input_string)
-            transformer = neo_fbsync.ENDPOINTS[crawl_type].transformer
+            transformer = fbsync.ENDPOINTS[crawl_type].transformer
 
             output = transformer(
                 input_data,
@@ -267,7 +267,7 @@ def load_run(self, run_id):
             table_name = path.replace(prefix, '').replace('/', '')
             logger.info("Loading table %s", table_name)
             tables.append(table_name)
-            inc_table = neo_fbsync.incremental_table_name(table_name, run_id)
+            inc_table = fbsync.incremental_table_name(table_name, run_id)
             with redshift_engine.connect() as connection:
                 with connection.begin():
                     dbutils.create_new_table(inc_table, table_name, connection)
@@ -289,8 +289,8 @@ def load_run(self, run_id):
 def merge_run(self, run_id, table_names):
     try:
         for table_name in table_names:
-            pkey = neo_fbsync.PRIMARY_KEYS[table_name]
-            inc_table = neo_fbsync.incremental_table_name(table_name, run_id)
+            pkey = fbsync.PRIMARY_KEYS[table_name]
+            inc_table = fbsync.incremental_table_name(table_name, run_id)
             logger.info("Merging table %s using join fields: %s", inc_table, pkey)
             with redshift_engine.connect() as connection:
                 with connection.begin():
@@ -310,8 +310,8 @@ def merge_run(self, run_id, table_names):
                 connection.execute("""
                     create table {affected_efids} as select efid from {users_inc}
                 """.format(
-                    affected_efids=neo_fbsync.affected_efids(run_id),
-                    users_inc=neo_fbsync.incremental_table_name(neo_fbsync.USERS_TABLE, run_id),
+                    affected_efids=fbsync.affected_efids(run_id),
+                    users_inc=fbsync.incremental_table_name(fbsync.USERS_TABLE, run_id),
                 ))
     except Exception, exc:
         logger.error("Retrying merge of run_id %s due to \"%s\"", run_id, exc)
@@ -325,7 +325,7 @@ def merge_run(self, run_id, table_names):
 def clean_up_incremental_tables(self, run_id, table_names):
     try:
         for table_name in table_names:
-            inc_table = neo_fbsync.incremental_table_name(table_name, run_id)
+            inc_table = fbsync.incremental_table_name(table_name, run_id)
             logger.info("Cleaning up incremental table %s", inc_table)
             with redshift_engine.connect() as connection:
                 dbutils.drop_table_if_exists(inc_table, connection)
@@ -382,12 +382,12 @@ def compute_edges(run_id):
             group by 1, 2
         """
         bindings = {
-            'user_posts': neo_fbsync.USER_POST_AGGREGATES_TABLE,
+            'user_posts': fbsync.USER_POST_AGGREGATES_TABLE,
         }
 
-        neo_fbsync.upsert(
+        fbsync.upsert(
             run_id,
-            neo_fbsync.EDGES_TABLE,
+            fbsync.EDGES_TABLE,
             'efid_primary',
             sql,
             bindings,
@@ -418,14 +418,14 @@ def compute_post_aggregates(run_id):
                 GROUP BY 1, 2
         """
         bindings = {
-            'posts': neo_fbsync.POSTS_TABLE,
-            'likes': neo_fbsync.POST_LIKES_TABLE,
-            'comments': neo_fbsync.POST_COMMENTS_TABLE,
-            'tagged': neo_fbsync.POST_TAGS_TABLE,
+            'posts': fbsync.POSTS_TABLE,
+            'likes': fbsync.POST_LIKES_TABLE,
+            'comments': fbsync.POST_COMMENTS_TABLE,
+            'tagged': fbsync.POST_TAGS_TABLE,
         }
-        neo_fbsync.upsert(
+        fbsync.upsert(
             run_id,
-            neo_fbsync.POST_AGGREGATES_TABLE,
+            fbsync.POST_AGGREGATES_TABLE,
             'efid',
             sql,
             bindings,
@@ -471,17 +471,17 @@ def compute_user_post_aggregates(run_id):
             group by 1, 2
         """
         bindings = {
-            'posts': neo_fbsync.POSTS_TABLE,
-            'likes': neo_fbsync.POST_LIKES_TABLE,
-            'comments': neo_fbsync.POST_COMMENTS_TABLE,
-            'tagged': neo_fbsync.POST_TAGS_TABLE,
-            'locales': neo_fbsync.USER_LOCALES_TABLE,
+            'posts': fbsync.POSTS_TABLE,
+            'likes': fbsync.POST_LIKES_TABLE,
+            'comments': fbsync.POST_COMMENTS_TABLE,
+            'tagged': fbsync.POST_TAGS_TABLE,
+            'locales': fbsync.USER_LOCALES_TABLE,
             'allids': allids,
         }
 
-        neo_fbsync.upsert(
+        fbsync.upsert(
             run_id,
-            neo_fbsync.USER_POST_AGGREGATES_TABLE,
+            fbsync.USER_POST_AGGREGATES_TABLE,
             'efid_wall',
             sql,
             bindings,
@@ -513,12 +513,12 @@ def compute_user_timeline_aggregates(run_id):
             group by 1
         """
         bindings = {
-            'posts': neo_fbsync.POSTS_TABLE,
+            'posts': fbsync.POSTS_TABLE,
         }
 
-        neo_fbsync.upsert(
+        fbsync.upsert(
             run_id,
-            neo_fbsync.USER_TIMELINE_AGGREGATES_TABLE,
+            fbsync.USER_TIMELINE_AGGREGATES_TABLE,
             'efid',
             sql,
             bindings,
@@ -550,13 +550,13 @@ def compute_poster_aggregates(run_id):
             group by 1
         """
         bindings = {
-            'posts': neo_fbsync.POSTS_TABLE,
-            'user_posts': neo_fbsync.USER_POST_AGGREGATES_TABLE,
+            'posts': fbsync.POSTS_TABLE,
+            'user_posts': fbsync.USER_POST_AGGREGATES_TABLE,
         }
 
-        neo_fbsync.upsert(
+        fbsync.upsert(
             run_id,
-            neo_fbsync.POSTER_AGGREGATES_TABLE,
+            fbsync.POSTER_AGGREGATES_TABLE,
             'efid_poster',
             sql,
             bindings,
@@ -600,17 +600,17 @@ def compute_user_aggregates(totals, run_id):
         ) sums
         """
         bindings = {
-            'users': neo_fbsync.USERS_TABLE,
-            'edges': neo_fbsync.EDGES_TABLE,
-            'post_aggregates': neo_fbsync.POST_AGGREGATES_TABLE,
-            'poster_aggregates': neo_fbsync.POSTER_AGGREGATES_TABLE,
-            'timeline_aggregates': neo_fbsync.USER_TIMELINE_AGGREGATES_TABLE,
-            'taggable_friends': neo_fbsync.USER_FRIENDS_TABLE,
-            'datediff_expression': neo_fbsync.datediff_expression(),
+            'users': fbsync.USERS_TABLE,
+            'edges': fbsync.EDGES_TABLE,
+            'post_aggregates': fbsync.POST_AGGREGATES_TABLE,
+            'poster_aggregates': fbsync.POSTER_AGGREGATES_TABLE,
+            'timeline_aggregates': fbsync.USER_TIMELINE_AGGREGATES_TABLE,
+            'taggable_friends': fbsync.USER_FRIENDS_TABLE,
+            'datediff_expression': fbsync.datediff_expression(),
         }
-        neo_fbsync.upsert(
+        fbsync.upsert(
             run_id,
-            neo_fbsync.USER_AGGREGATES_TABLE,
+            fbsync.USER_AGGREGATES_TABLE,
             'efid',
             sql,
             bindings,
@@ -619,7 +619,7 @@ def compute_user_aggregates(totals, run_id):
 
         with redshift_engine.connect() as connection:
             dbutils.drop_table_if_exists(
-                neo_fbsync.affected_efids(run_id),
+                fbsync.affected_efids(run_id),
                 connection
             )
 
@@ -634,13 +634,13 @@ def compute_user_aggregates(totals, run_id):
 def cache_tables(run_id):
     try:
         tables_to_sync = (
-            (neo_fbsync.USERS_TABLE, 'efid', None),
-            (neo_fbsync.USER_AGGREGATES_TABLE, 'efid', None),
-            (neo_fbsync.USER_ACTIVITIES_TABLE, None, ('efid',)),
-            (neo_fbsync.USER_LIKES_TABLE, None, ('efid',)),
-            (neo_fbsync.USER_PERMISSIONS_TABLE, None, ('efid',)),
-            (neo_fbsync.USER_LOCALES_TABLE, None, ('tagged_efid',)),
-            (neo_fbsync.USER_LANGUAGES_TABLE, None, ('efid',)),
+            (fbsync.USERS_TABLE, 'efid', None),
+            (fbsync.USER_AGGREGATES_TABLE, 'efid', None),
+            (fbsync.USER_ACTIVITIES_TABLE, None, ('efid',)),
+            (fbsync.USER_LIKES_TABLE, None, ('efid',)),
+            (fbsync.USER_PERMISSIONS_TABLE, None, ('efid',)),
+            (fbsync.USER_LOCALES_TABLE, None, ('tagged_efid',)),
+            (fbsync.USER_LANGUAGES_TABLE, None, ('efid',)),
         )
         for aggregate_table, primary_key, indexed_columns in tables_to_sync:
             dbutils.cache_table(

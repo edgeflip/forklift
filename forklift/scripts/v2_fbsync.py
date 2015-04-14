@@ -6,7 +6,7 @@ from sqlalchemy import func
 
 from forklift import tasks
 from forklift.db.base import RDSCacheSession
-from forklift.loaders import neo_fbsync
+from forklift.loaders import fbsync
 from forklift.models.fbsync import FBSyncRunList, FBSyncPageTask, FBSyncRun
 from forklift.models.magnus import FBAppUser, FBUserToken
 
@@ -17,10 +17,10 @@ logger.propagate = False
 
 def always_be_crawling(efid, fbid, appid, run_id, stop_datetime):
     logger.info("Kicking off crawl for efid %d, starting at %s", efid, stop_datetime)
-    for crawl_type, endpoint in neo_fbsync.ENDPOINTS.iteritems():
-        if endpoint.entity_type == neo_fbsync.USER_ENTITY_TYPE:
+    for crawl_type, endpoint in fbsync.ENDPOINTS.iteritems():
+        if endpoint.entity_type == fbsync.USER_ENTITY_TYPE:
             tasks.extract_url.delay(
-                neo_fbsync.get_user_endpoint(fbid, endpoint.endpoint),
+                fbsync.get_user_endpoint(fbid, endpoint.endpoint),
                 run_id,
                 efid,
                 fbid,
