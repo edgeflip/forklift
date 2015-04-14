@@ -1,4 +1,3 @@
-from boto.s3.key import Key
 import traceback
 import celery
 from celery.exceptions import MaxRetriesExceededError
@@ -11,15 +10,13 @@ import uuid
 import json
 from kombu import Exchange, Queue
 
-from forklift.db.base import rds_cache_engine, redshift_engine, RDSCacheSession, RDSSourceSession
+from forklift.db.base import rds_cache_engine, redshift_engine, RDSCacheSession
 from forklift.db import utils as dbutils
 from forklift import facebook
 from forklift.loaders import neo_fbsync
-from forklift.loaders.fbsync import FeedChunk, POSTS, LINKS, LIKES, TOP_WORDS, FBSyncLoader
 from forklift.models.fbsync import FBSyncPageTask, FBSyncRunList
 from forklift.models.magnus import FBUserToken, FBAppUser
-from forklift.nlp import tfidf
-from forklift.s3.utils import get_conn_s3, write_string_to_key, key_to_string, write_file_to_key, get_bucket
+from forklift.s3.utils import write_string_to_key, key_to_string, write_file_to_key, get_bucket
 from forklift.utils import batcher
 from celery.utils.log import get_task_logger
 
@@ -31,120 +28,8 @@ app.autodiscover_tasks(['forklift.tasks'])
 logger = get_task_logger(__name__)
 logger.propagate = False
 
-
-def key_name(version, prefix, unique_id):
-    return "/".join((
-        COMMON_OUTPUT_PREFIX,
-        str(version),
-        prefix,
-        unique_id,
-    ))
-
-
-COMMON_OUTPUT_PREFIX = "transfer_batches"
-POSTS_FOLDER = 'posts'
-LINKS_FOLDER = 'links'
-LIKES_FOLDER = 'likes'
-TOP_WORDS_FOLDER = 'top_words'
-
-
-class VectorizerTask(app.Task):
-    abstract = True
-    _vectorizer = None
-
-    @property
-    def vectorizer(self):
-        if self._vectorizer is None:
-            logger.info("Loading default vectorizer")
-            self._vectorizer = tfidf.load_default_vectorizer(get_conn_s3())
-            logger.info("Loaded default vectorizer")
-        return self._vectorizer
-
-
-@app.task(base=VectorizerTask, bind=True, default_retry_delay=5, max_retries=3, acks_late=True)
-def fbsync_process(self, keys, version, out_bucket_name, unique_id):
-    try:
-        feed_chunk = FeedChunk(self.vectorizer, logger)
-        s3_conn = get_conn_s3()
-        for bucket_name, primary, secondary in keys:
-            key = Key(
-                bucket=s3_conn.get_bucket(bucket_name),
-                name='{}_{}'.format(primary, secondary)
-            )
-            feed_chunk.add_feed_from_key(key)
-
-        key_names = {
-            POSTS: key_name(version, POSTS_FOLDER, unique_id),
-            LINKS: key_name(version, LINKS_FOLDER, unique_id),
-            LIKES: key_name(version, LIKES_FOLDER, unique_id),
-            TOP_WORDS: key_name(version, TOP_WORDS_FOLDER, unique_id),
-        }
-
-        logger.info("Writing chunk to s3: %s", key_names)
-        feed_chunk.write_s3(
-            s3_conn,
-            out_bucket_name,
-            key_names
-        )
-
-        return (
-            feed_chunk.counts[POSTS],
-            feed_chunk.counts[LINKS],
-            feed_chunk.counts[LIKES]
-        )
-    except Exception:
-        identifier = "run {}/chunk {}".format(version, unique_id)
-        logger.exception("%s failed due to error", identifier)
-        try:
-            self.retry()
-        except MaxRetriesExceededError:
-            logger.exception("%s had too many retries, failing", identifier)
-            return (0,0,0)
-
-
-@app.task
-def fbsync_load(totals, out_bucket, version):
-    total = reduce(
-        lambda (posts, links, likes), (p, u, l): (posts+p, links+u, likes+l),
-        totals,
-        (0, 0, 0)
-    )
-    logger.info("Adding new data from run %s: posts = %s, user_posts = %s, likes = %s",
-        version,
-        *total
-    )
-    try:
-        loader = FBSyncLoader(engine=redshift_engine, logger=logger)
-        loader.add_new_data(
-            out_bucket,
-            COMMON_OUTPUT_PREFIX,
-            version,
-            POSTS_FOLDER,
-            LINKS_FOLDER,
-            LIKES_FOLDER,
-            TOP_WORDS_FOLDER
-        )
-        logger.info("Done adding new data from run %s", version)
-    except Exception:
-        logger.exception("Worker processing run %s caught error", version)
-
-    more_tables_to_sync = (
-        'users',
-        'user_aggregates',
-    )
-    for aggregate_table in more_tables_to_sync:
-        dbutils.cache_table(
-            redshift_engine,
-            rds_cache_engine,
-            '{}_staging'.format(aggregate_table),
-            aggregate_table,
-            '{}_old'.format(aggregate_table),
-            ','
-        )
-
-
-NEO_JSON_BUCKET = 'fbsync-neo-json'
-NEO_CSV_BUCKET = 'fbsync-neo-csv'
+JSON_BUCKET = 'fbsync-json'
+CSV_BUCKET = 'fbsync-csv'
 
 
 class ExpiredTokenError(IOError):
@@ -191,7 +76,7 @@ def extract_url(
         db_session.commit()
 
         data = facebook.utils.urlload(url, access_token=token.access_token, logger=logger)
-        bucket_name = NEO_JSON_BUCKET
+        bucket_name = JSON_BUCKET
 
         min_datetime = datetime.today()
         if data.get('data') or crawl_type == 'public_profile':
@@ -319,7 +204,7 @@ def transform_page(self, bucket_name, json_key_name, crawl_type, efid, appid, ru
                 csv_key_name = "{}/{}/{}.csv".format(run_id, table, unique_identifier)
                 logger.info("Writing to {}".format(csv_key_name))
                 file_obj.seek(0, os.SEEK_SET)
-                write_file_to_key(NEO_CSV_BUCKET, csv_key_name, file_obj)
+                write_file_to_key(CSV_BUCKET, csv_key_name, file_obj)
 
         db_session = RDSCacheSession()
         task_log.transformed = datetime.today()
@@ -372,7 +257,7 @@ def check_load(run_id):
 @app.task(bind=True, default_retry_delay=5, max_retries=5)
 def load_run(self, run_id):
     try:
-        bucket_name = NEO_CSV_BUCKET
+        bucket_name = CSV_BUCKET
         bucket = get_bucket(bucket_name)
         prefix = "{}/".format(run_id)
         paths = [t.name for t in bucket.list(prefix=prefix, delimiter='/')]

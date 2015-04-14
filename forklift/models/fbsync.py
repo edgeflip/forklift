@@ -2,13 +2,6 @@ from .base import Base
 from sqlalchemy import Column, String, BigInteger, DateTime, Boolean
 
 
-class FbidPostId(Base):
-    __tablename__ = 'fbid_post_ids'
-    __table_args__ = {'extend_existing': True}
-
-    fbid_post = Column(String, primary_key=True)
-
-
 class ForkliftMixin(object):
     __table_args__ = {'schema': 'forklift'}
 
