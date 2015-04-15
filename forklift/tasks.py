@@ -605,7 +605,7 @@ def compute_user_aggregates(totals, run_id):
             'post_aggregates': fbsync.POST_AGGREGATES_TABLE,
             'poster_aggregates': fbsync.POSTER_AGGREGATES_TABLE,
             'timeline_aggregates': fbsync.USER_TIMELINE_AGGREGATES_TABLE,
-            'taggable_friends': fbsync.USER_FRIENDS_TABLE,
+            'taggable_friends': fbsync.USER_TAGGABLE_FRIENDS_TABLE,
             'datediff_expression': fbsync.datediff_expression(),
         }
         fbsync.upsert(
@@ -641,6 +641,7 @@ def cache_tables(run_id):
             (fbsync.USER_PERMISSIONS_TABLE, None, ('efid',)),
             (fbsync.USER_LOCALES_TABLE, None, ('tagged_efid',)),
             (fbsync.USER_LANGUAGES_TABLE, None, ('efid',)),
+            (fbsync.USER_APP_FRIENDS_TABLE, None, ('efid',)),
         )
         for aggregate_table, primary_key, indexed_columns in tables_to_sync:
             dbutils.cache_table(

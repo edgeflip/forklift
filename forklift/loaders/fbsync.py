@@ -23,7 +23,8 @@ USER_INTERESTS_TABLE = 'v2_user_interests'
 USER_ACTIVITIES_TABLE = 'v2_user_activities'
 USER_LIKES_TABLE = 'v2_user_likes'
 USER_PERMISSIONS_TABLE = 'v2_user_permissions'
-USER_FRIENDS_TABLE = 'v2_user_friends'
+USER_TAGGABLE_FRIENDS_TABLE = 'v2_user_taggable_friends'
+USER_APP_FRIENDS_TABLE = 'v2_user_app_friends'
 USER_LOCALES_TABLE = 'v2_user_locales'
 USER_LANGUAGES_TABLE = 'v2_user_languages'
 
@@ -59,11 +60,27 @@ def transform_taggable_friends(input_data, efid, appid, crawl_type, post_id, pos
             efid,
             input_row['name']
         )
-        output_lines[USER_FRIENDS_TABLE].append(
+        output_lines[USER_TAGGABLE_FRIENDS_TABLE].append(
             tuple(transform_field(field, DEFAULT_DELIMITER) for field in friend_fields)
         )
 
     return output_lines
+
+
+def transform_app_friends(input_data, efid, appid, crawl_type, post_id, post_from):
+    output_lines = []
+
+    for input_row in input_data['data']:
+        friend_fields = (
+            efid,
+            get_or_create_efid(input_row['id'], appid, input_row['name']),
+            input_row['name'],
+        )
+        output_lines.append(
+            tuple(transform_field(field, DEFAULT_DELIMITER) for field in friend_fields)
+        )
+
+    return { USER_APP_FRIENDS_TABLE: output_lines }
 
 
 def transform_permissions(input_data, efid, appid, crawl_type, post_id, post_from):
@@ -165,7 +182,8 @@ PRIMARY_KEYS = {
     USER_LANGUAGES_TABLE: ('efid',),
     USERS_TABLE: ('efid',),
     USER_PERMISSIONS_TABLE: ('efid', 'permission'),
-    USER_FRIENDS_TABLE: ('efid',),
+    USER_TAGGABLE_FRIENDS_TABLE: ('efid',),
+    USER_APP_FRIENDS_TABLE: ('efid',),
     USER_LOCALES_TABLE: ('post_id', 'tagged_efid'),
 }
 
@@ -229,6 +247,11 @@ ENDPOINTS = {
     'taggable_friends': FBEndpoint(
         endpoint='taggable_friends',
         transformer=transform_taggable_friends,
+        entity_type=USER_ENTITY_TYPE,
+    ),
+    'app_friends': FBEndpoint(
+        endpoint='friends',
+        transformer=transform_app_friends,
         entity_type=USER_ENTITY_TYPE,
     ),
     'post_likes': FBEndpoint(
