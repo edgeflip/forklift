@@ -11,10 +11,9 @@ PyYAML==3.10
 raven==3.6.0
 boto==2.20.1
 unicodecsv==0.9.4
--e git+git@github.com:systemadev/pymlconf.git#egg=pymlconf
+pymlconf
 nltk
 numpy
 redis
 scipy
 scikit-learn
--e git+git@github.com:edgeflip/faraday.git#egg=Faraday
