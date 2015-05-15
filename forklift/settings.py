@@ -29,7 +29,7 @@ BROKER_URL = 'amqp://{user}:{pass}@{host}:5672/{vhost}'.format(**RABBITMQ)
 CELERY_IMPORTS = ('forklift.tasks', )
 CELERY_RESULT_BACKEND = 'redis://{host}:6379'.format(**REDIS_RESULT_BACKEND)
 CELERYD_PREFETCH_MULTIPLIER = 1
-CELERY_ACCEPT_CONTENT = ['pickle', 'json'] # json so we can inspect workers
+CELERY_ACCEPT_CONTENT = ['json'] # json so we can inspect workers
 CELERYD_MAX_TASKS_PER_CHILD = 5
 
 QUEUE_ARGS = {'x-ha-policy': 'all'}
@@ -108,12 +108,12 @@ if 'ENV' in os.environ and os.environ['ENV'] in ('staging', 'production'):
         'formatter': 'console',
     }
     LOGGING['loggers']['grackle'].setdefault('handlers', []).append('sentry')
-logging.config.dictConfig(LOGGING)
+logging.basicConfig(level=logging.INFO)
 
 
 @setup_logging.connect
 def configure_logging(sender=None, **kwargs):
-    logging.config.dictConfig(LOGGING)
+    logging.basicConfig(level=LOGGING.INFO)
 
 
 IP_SLUG = 'ip'
