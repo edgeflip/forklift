@@ -113,7 +113,7 @@ logging.basicConfig(level=logging.INFO)
 
 @setup_logging.connect
 def configure_logging(sender=None, **kwargs):
-    logging.basicConfig(level=LOGGING.INFO)
+    logging.basicConfig(level=logging.INFO)
 
 
 IP_SLUG = 'ip'
