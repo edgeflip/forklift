@@ -52,18 +52,18 @@ def transform_stream(input_data, efid, appid, data_type, post_id, post_from):
 
 
 def transform_taggable_friends(input_data, efid, appid, crawl_type, post_id, post_from):
-    output_lines = defaultdict()
+    output_lines = []
 
     for input_row in input_data['data']:
         friend_fields = (
             efid,
             input_row['name']
         )
-        output_lines[USER_FRIENDS_TABLE].append(
+        output_lines.append(
             tuple(transform_field(field, DEFAULT_DELIMITER) for field in friend_fields)
         )
 
-    return output_lines
+    return { USER_FRIENDS_TABLE: output_lines }
 
 
 def transform_permissions(input_data, efid, appid, crawl_type, post_id, post_from):

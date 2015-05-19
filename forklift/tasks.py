@@ -580,7 +580,7 @@ def compute_user_aggregates(totals, run_id):
                 max({datediff_expression}) as age,
                 max(first_activity) as first_activity,
                 max(last_activity) as last_activity,
-                count({taggable_friends}.name) as num_taggable_friends,
+                count({taggable_friends}.friend_name) as num_taggable_friends,
                 count(distinct {edges}.efid_secondary) as num_person_edges,
                 max(num_posts) as num_posts,
                 max(num_posts_with_edges) as num_posts_with_edges,
